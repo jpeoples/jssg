@@ -312,7 +312,7 @@ class Environment:
             ]
             mdextconf.update({"mdx_math": {'enable_dollar_delimiter': True}})
 
-        mdfilter = markdown.Markdown(extensions=mdext, extension_configs=mdextconf).convert
+        mdfilter = lambda x: markdown.markdown(x, extensions=mdext, extension_configs=mdextconf)
 
         # set up the jinja env
         if template_loader_dirs is None:
