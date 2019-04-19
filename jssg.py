@@ -192,42 +192,40 @@ def get_callable_rule(rule):
         return f
     return rule
 
+def apply_rule_proc(rule_proc, ctx, fn):
+    """Apply a RuleProc to a fn with ctx.
 
-class BuildRules:
-    """A class to apply build rules to incoming files."""
-    def __init__(self, rules):
-        self.rules = rules
+    This works for callable rule_proc's and tuples of (path_map, file_map)
+    """
+    f = get_callable_rule(rule_proc)
+    return f(ctx, fn)
 
-    def match(self, ctx, fn):
-        """Call the first matching build rule on fn, supplying ctx"""
-        # call first matching rule
-        for matcher, rule in self.rules:
-            if self._single_match(matcher, fn):
-                func = get_callable_rule(rule)
-                return func(ctx, fn)
+def get_first_matching_rule_proc(rules, fn):
+    """Find the first matching rule_proc on fn"""
+    for matcher, rule in rules:
+        if _single_match(matcher, fn):
+            return rule
 
-    def _single_match(self, matcher, fn):
-        try:
-            ret = matcher(fn)
-        except TypeError:
-            # fallback is to match as glob string
-            # NOTE: One would think we could just use fn.match(matcher)
-            # here, and indeed, that is what we used to do. However, for
-            # some reason this was often failing on Windows... So I have
-            # replaced it with the fnmatch version, which actually seems
-            # to work for now.
-            fpath = fn.as_posix()
-            if isinstance(matcher, str):
-                ret = fnmatch.fnmatch(fpath, matcher)
-            else:
-                # NOTE: we can group glob strings for convenience
-                for match in matcher:
-                    ret = fnmatch.fnmatch(fpath, match)
-                    if ret:
-                        break
-        return ret
-
-
+def _single_match(matcher, fn):
+    try:
+        ret = matcher(fn)
+    except TypeError:
+        # fallback is to match as glob string
+        # NOTE: One would think we could just use fn.match(matcher)
+        # here, and indeed, that is what we used to do. However, for
+        # some reason this was often failing on Windows... So I have
+        # replaced it with the fnmatch version, which actually seems
+        # to work for now.
+        fpath = fn.as_posix()
+        if isinstance(matcher, str):
+            ret = fnmatch.fnmatch(fpath, matcher)
+        else:
+            # NOTE: we can group glob strings for convenience
+            for match in matcher:
+                ret = fnmatch.fnmatch(fpath, match)
+                if ret:
+                    break
+    return ret
 
 def jinja_env(load_paths, additional_filters=None):
     """Initialize a jinja env that searches all load_paths for templates.
@@ -376,14 +374,12 @@ class Environment:
         ctx.update({'indir': self.indir, 'outdir': self.outdir, 'base_url': self.base_url,
                'jenv': self.jenv, 'render_context': template_render_data,
                'page_collection': page_collection})
-        
 
-        if not isinstance(rules, BuildRules):
-            rules = BuildRules(rules)
 
         directory = self.indir
         if subdir is not None:
             directory = directory / subdir
 
         for fn in walk_directory(directory, self.indir):
-            rules.match(ctx, fn)
+            rule = get_first_matching_rule_proc(rules, fn)
+            apply_rule_proc(rule, ctx, fn)
