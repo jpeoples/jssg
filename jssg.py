@@ -1,3 +1,10 @@
+"""jssg -- Jake's Static Site Generation Library
+
+This is a simple module for aiding with static site generation. The
+basic concept is to allow the generation of a static html website by
+transforming a source directory into a build directory.
+"""
+
 # Std libs
 import sys
 import os
@@ -31,10 +38,16 @@ rss_base_src = """
     {% endfor %}
 </channel>
 </rss>
-"""
+""".strip()
 
 
 def walk_directory(input_directory, relative_to=None):
+    """A generator returning all files under input_directory
+
+    This function returns all functions, recursively, under input_directory,
+    expressed as a path relative to relative_to. If relative_to is None,
+    then input_directory is used as relative_to.
+    """
     if relative_to is None:
         relative_to = input_directory
     for directory_path, _, file_names in os.walk(str(input_directory)):
@@ -44,6 +57,7 @@ def walk_directory(input_directory, relative_to=None):
 
 # Path utility functions
 def ensure_directory(path):
+    """Ensure the parent directory to path exists"""
     try:
         path.parent.mkdir(parents=True)
     except FileExistsError:
@@ -57,19 +71,32 @@ def path_replace_all_suffix(path, suffix):
 
 
 def mirror(ctx, fn):
+    """PathMap function mirroring a path in source dir to build dir"""
     return ctx['indir'] / fn, ctx['outdir'] / fn
 
 def to_html(ctx, fn):
+    """PathMap function mirroring a source dir path, replacing all extensions with .html"""
     return ctx['indir'] / fn, ctx['outdir'] / path_replace_all_suffix(fn, '.html')
 
 def remove_internal_extensions(ctx, fn):
+    """PathMap function mirroring a source dir path, removing all extensions but the last"""
     return ctx['indir'] / fn, ctx['outdir'] / path_replace_all_suffix(fn, fn.suffix)
 
 
 def copy_file(ctx, inpath, outpath):
+    """FileMap function copying a file directly"""
     shutil.copy(str(inpath), str(outpath))
 
 def jinja_file(ctx, inpath, outpath):
+    """FileMap function rendering the input file as a jinja2 template to produce the output file.
+
+    In addition to providing any user supplied tempalte_render_data (via
+    the Environment constructor, or build_all method) in the render dictionary,
+    'href' and 'fullhref' will also be passed, containing the url relative
+    to the base of website, and full url, respectively. Further, 'push_to_collection'
+    will be provided as a function, allowing metadata to be pushed to the
+    current page collection (if any).
+    """
     jenv = ctx['jenv']
     render_context = ctx['render_context']
     page_collection = ctx['page_collection']
@@ -82,29 +109,40 @@ def jinja_file(ctx, inpath, outpath):
             'fullhref': base_url + href
             }
 
-
+    render_context = render_context.copy()
+    render_context.update(additional_ctx)
     if page_collection is not None:
-        render_context = render_context.copy()
         render_context['push_to_collection'] = lambda x: page_collection.push(x, additional_ctx)
-        render_context.update(additional_ctx)
 
-    contents = inpath.open('r').read()
+    contents = inpath.open('r', encoding='utf-8').read()
     jt = jenv.from_string(contents)
     with outpath.open('w', encoding='utf-8') as f:
         f.write(jt.render(render_context))
 
 def ignore_file(*args, **kwargs):
+    """RuleProc function doing nothing at all!"""
     pass
 
 
 class PageCollection:
-    """A class for storing information about a set of pages"""
+    """A class for storing information about a sorted collection of pages.
+
+    Importantly, when building with Environment.build_dir, if a post_collection
+    is specified, then the push method is made available to jinja templates
+    as "push_to_collection" (taking one argument, page_dict. additional_ctx
+    is provided by jinja_file).
+
+    In this way, sets of files can be built, storing any desired metadata,
+    and then this metadata can be made available to other templates later.
+    This allows automated creation of archives, for example.
+    """
     def __init__(self, sort_key='date'):
         self.pages = []
         self.keys = []
         self.sort_key = sort_key
 
     def push(self, page_dict, additional_ctx=None):
+        """Add a page to collection, maintaining sort on self.sort_key"""
         if additional_ctx is not None:
             page_dict = page_dict.copy()
             page_dict.update(additional_ctx)
@@ -116,12 +154,14 @@ class PageCollection:
         self.pages.insert(x, page_dict)
 
     def history(self, count=20):
+        """Get the last count pages in collection, in reverse order"""
         for i, post in enumerate(reversed(self.pages)):
             if count is not None and i >= count:
                 break
             yield post
 
     def by_year(self):
+        """Get pages grouped by year, in reverse chronological order"""
         current_year = None
         for post in reversed(self.pages):
             date = post['date']
@@ -135,16 +175,15 @@ class PageCollection:
         yield obj
 
     def all_pages(self):
+        """Get all pages in reverse chronological order"""
         return self.history(count=len(self.pages))
 
-def enable_push_to_collection(pages, env=None):
-    if env is None:
-        env = {}
-    env.copy()
-    env.update({'push_to_collection': pages.push})
-    return env
 
 def get_callable_rule(rule):
+    """Convert a (PathMap,FileMap) pair into a callable RuleProc
+
+    If rule is already a callable, do nothing.
+    """
     if not callable(rule):
         def f(ctx, fn):
             inp, outp = rule[0](ctx, fn)
@@ -155,10 +194,12 @@ def get_callable_rule(rule):
 
 
 class BuildRules:
+    """A class to apply build rules to incoming files."""
     def __init__(self, rules):
         self.rules = rules
 
     def match(self, ctx, fn):
+        """Call the first matching build rule on fn, supplying ctx"""
         # call first matching rule
         for matcher, rule in self.rules:
             if self._single_match(matcher, fn):
@@ -179,6 +220,7 @@ class BuildRules:
             if isinstance(matcher, str):
                 ret = fnmatch.fnmatch(fpath, matcher)
             else:
+                # NOTE: we can group glob strings for convenience
                 for match in matcher:
                     ret = fnmatch.fnmatch(fpath, match)
                     if ret:
@@ -188,6 +230,10 @@ class BuildRules:
 
 
 def jinja_env(load_paths, additional_filters=None):
+    """Initialize a jinja env that searches all load_paths for templates.
+
+    builtin templates can also be found under builtin/
+    """
     user_loader = jinja2.ChoiceLoader([jinja2.FileSystemLoader(path) for path in load_paths])
     builtin_loader = jinja2.DictLoader({'rss_base.xml': rss_base_src})
 
@@ -204,18 +250,43 @@ def jinja_env(load_paths, additional_filters=None):
 
 
 def format_date(x, format_str):
+    """Format a datestr with a given format string"""
     if isinstance(x, str):
         x = dateutil.parser.parse(x)
     return x.strftime(format_str)
 
 def rss_date(x):
+    """Format a datestr into a format acceptable for RSS"""
     if isinstance(x, str):
         x = dateutil.parser.parse(x)
     return email.utils.format_datetime(x)
 
 
 class Environment:
-    def __init__(self, indir, outdir, base_url, *, template_loader_dirs=None, mdext=None, mdextconf=None, jenv=None, date_format_str='%B %d, %Y', template_render_data=None):
+    """The main class provided for building directories.
+
+    indir and outdir are the source and build directories, and base_url
+    is the complete url of the website.
+
+    template_loader_dirs:
+        directories to be searched for jinja templates. In particular,
+        if a template refers to another template (such as via "extends"),
+        then these are the directories that will be searched. If None,
+        indir will be used.
+    mdext:
+        extensions to use in the markdown.Markdown class for processing
+        text through the markdown filter in a jinja template.
+    mdextconf:
+        The extension configuration dict (extension_configs) to be passed
+        to the markdown.Markdown class for use in the markdown filter.
+    additional_jinja_filters:
+        Additional filter functions to be made available in Jinja templates.
+    date_format_str:
+        The format string to use in the format_date filter.
+    template_render_data:
+        Context to be provided when rendering Jinja templates.
+    """
+    def __init__(self, indir, outdir, base_url, *, template_loader_dirs=None, mdext=None, mdextconf=None, additional_jinja_filters=None, date_format_str='%B %d, %Y', template_render_data=None, user_ctx=None):
         if isinstance(indir, str):
             indir = pathlib.Path(indir)
         if isinstance(outdir, str):
@@ -244,10 +315,9 @@ class Environment:
         mdfilter = markdown.Markdown(extensions=mdext, extension_configs=mdextconf).convert
 
         # set up the jinja env
-        if jenv is None:
-            if template_loader_dirs is None:
-                template_loader_dirs = (str(indir),)
-            jenv = jinja_env(template_loader_dirs)
+        if template_loader_dirs is None:
+            template_loader_dirs = (str(indir),)
+        jenv = jinja_env(template_loader_dirs, additional_jinja_filters)
 
         # add default filters to jinja env
         jenv.filters.update({
@@ -263,17 +333,43 @@ class Environment:
         self.template_render_data = template_render_data
         self.template_render_data['base_url'] = base_url
 
+        if user_ctx is None:
+            self.user_ctx = {}
+        else:
+            self.user_ctx = user_ctx
 
-    def build_dir(self, rules, subdir=None, additional_template_render_data=None, page_collection=None):
+
+    def build_dir(self, rules, subdir=None, additional_template_render_data=None, page_collection=None, additional_user_ctx=None):
+        """Apply build rules to all files recursively in a directory.
+
+        rules:
+            A list of build rules, or a BuildRules object.
+        subdir:
+            If given, subdir must be a child of source dir. In this case, only
+            files under subdir are processed. If none, the entire source
+            dir is processed.
+        additional_template_render_data:
+            Additional data to add to the render context dictionary for jinja templates.
+        page_collection:
+            A PageCollection object. If active, it's push method will be
+            made available to jinja templates as "push_to_collection", where
+            the second argument 'additional_ctx' will be passed in automatically
+            containing 'href' and 'fullhref', the url relative to the website,
+            and complete url respectively.
+        """
         if additional_template_render_data is not None:
             template_render_data = self.template_render_data.copy()
             template_render_data.update(additional_template_render_data)
         else:
             template_render_data = self.template_render_data
 
-        ctx = {'indir': self.indir, 'outdir': self.outdir, 'base_url': self.base_url,
+        ctx = self.user_ctx.copy()
+        if additional_user_ctx:
+            ctx.update(additional_user_ctx)
+        ctx.update({'indir': self.indir, 'outdir': self.outdir, 'base_url': self.base_url,
                'jenv': self.jenv, 'render_context': template_render_data,
-               'page_collection': page_collection}
+               'page_collection': page_collection})
+        
 
         if not isinstance(rules, BuildRules):
             rules = BuildRules(rules)
