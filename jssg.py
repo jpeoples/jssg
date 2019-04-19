@@ -233,8 +233,15 @@ def jinja_env(load_paths, additional_filters=None):
     """Initialize a jinja env that searches all load_paths for templates.
 
     builtin templates can also be found under builtin/
+
+    load_paths is an iterable containing either strings to paths to search,
+    or tuples containing (prefix, path) pairs.
     """
-    user_loader = jinja2.ChoiceLoader([jinja2.FileSystemLoader(path) for path in load_paths])
+    user_loader = jinja2.ChoiceLoader(
+            [jinja2.FileSystemLoader(path) if isinstance(path, str) else
+                jinja2.PrefixLoader(
+                    {path[0]: jinja2.FileSystemLoader(path[1])}
+                ) for path in load_paths])
     builtin_loader = jinja2.DictLoader({'rss_base.xml': rss_base_src})
 
     builtin_loader = jinja2.PrefixLoader({
