@@ -16,8 +16,6 @@ import fnmatch
 
 #requirements
 import dateutil.parser
-import jinja2
-import markdown
 
 rss_base_src = """
 <?xml version="1.0" encoding="UTF-8" ?>
@@ -39,7 +37,6 @@ rss_base_src = """
 </channel>
 </rss>
 """.strip()
-
 
 def walk_directory(input_directory, relative_to=None):
     """A generator returning all files under input_directory
@@ -70,55 +67,67 @@ def path_replace_all_suffix(path, suffix):
     return path.with_suffix(suffix)
 
 
-def mirror(ctx, fn):
-    """PathMap function mirroring a path in source dir to build dir"""
-    return ctx['indir'] / fn, ctx['outdir'] / fn
+#### PathMap functions
+def mirror(fn):
+    return fn
 
-def to_html(ctx, fn):
-    """PathMap function mirroring a source dir path, replacing all extensions with .html"""
-    return ctx['indir'] / fn, ctx['outdir'] / path_replace_all_suffix(fn, '.html')
+def remove_internal_extensions(fn):
+    return path_replace_all_suffix(fn, fn.suffix)
 
-def remove_internal_extensions(ctx, fn):
-    """PathMap function mirroring a source dir path, removing all extensions but the last"""
-    return ctx['indir'] / fn, ctx['outdir'] / path_replace_all_suffix(fn, fn.suffix)
+def to_html(fn):
+    return path_replace_all_suffix(fn, '.html')
+
+def replace_extensions(new_ext):
+    return lambda fn: path_replace_all_suffix(fn, '.'+new_ext)
 
 
-def copy_file(ctx, inpath, outpath):
+#### FileMap Functions
+def copy_file(inpath, outpath):
     """FileMap function copying a file directly"""
     shutil.copy(str(inpath), str(outpath))
 
-def jinja_file(ctx, inpath, outpath):
-    """FileMap function rendering the input file as a jinja2 template to produce the output file.
+class JinjaFile:
+    def __init__(self, jenv, base_url, outdir, page_collection=None, render_ctx=None):
+        if render_ctx is None:
+            render_ctx = {}
+        self.jenv = jenv
+        self.base_url = base_url
+        self.outdir = outdir
+        self.page_collection = page_collection
+        self.render_ctx = render_ctx
 
-    In addition to providing any user supplied tempalte_render_data (via
-    the Environment constructor, or build_all method) in the render dictionary,
-    'href' and 'fullhref' will also be passed, containing the url relative
-    to the base of website, and full url, respectively. Further, 'push_to_collection'
-    will be provided as a function, allowing metadata to be pushed to the
-    current page collection (if any).
-    """
-    jenv = ctx['jenv']
-    render_context = ctx['render_context']
-    page_collection = ctx['page_collection']
-    base_url = ctx['base_url']
-    outdir = ctx['outdir']
+    def override(self, page_collection=None, additional_ctx=None):
+        if additional_ctx is not None:
+            render_ctx = self.render_ctx.copy()
+            render_ctx.update(additional_ctx)
+        else:
+            render_ctx = self.render_ctx
 
-    href = outpath.relative_to(outdir).as_posix()
-    additional_ctx = {
-            'href': href,
-            'fullhref': base_url + href
-            }
+        if page_collection is None:
+            page_collection = self.page_collection
 
-    render_context = render_context.copy()
-    render_context.update(additional_ctx)
-    if page_collection is not None:
-        render_context['push_to_collection'] = lambda x: page_collection.push(x, additional_ctx)
+        return JinjaFile(self.jenv, self.base_url, self.outdir, page_collection, render_ctx)
 
-    contents = inpath.open('r', encoding='utf-8').read()
-    jt = jenv.from_string(contents)
-    with outpath.open('w', encoding='utf-8') as f:
-        f.write(jt.render(render_context))
+    def __call__(self, inpath, outpath):
+        href = outpath.relative_to(self.outdir).as_posix()
+        additional_ctx = {
+                'href': href,
+                'fullhref': self.base_url + href
+        }
 
+        render_context = self.render_ctx.copy()
+        render_context.update(additional_ctx)
+        if self.page_collection is not None:
+            render_context['push_to_collection'] = lambda x: self.page_collection.push(x, additional_ctx)
+
+        contents = inpath.open('r', encoding='utf-8').read()
+        jt = self.jenv.from_string(contents)
+        with outpath.open('w', encoding='utf-8') as f:
+            f.write(jt.render(render_context))
+
+
+
+#### Other Rule Procs
 def ignore_file(*args, **kwargs):
     """RuleProc function doing nothing at all!"""
     pass
@@ -179,26 +188,6 @@ class PageCollection:
         return self.history(count=len(self.pages))
 
 
-def get_callable_rule(rule):
-    """Convert a (PathMap,FileMap) pair into a callable RuleProc
-
-    If rule is already a callable, do nothing.
-    """
-    if not callable(rule):
-        def f(ctx, fn):
-            inp, outp = rule[0](ctx, fn)
-            ensure_directory(outp)
-            rule[1](ctx, inp, outp)
-        return f
-    return rule
-
-def apply_rule_proc(rule_proc, ctx, fn):
-    """Apply a RuleProc to a fn with ctx.
-
-    This works for callable rule_proc's and tuples of (path_map, file_map)
-    """
-    f = get_callable_rule(rule_proc)
-    return f(ctx, fn)
 
 def get_first_matching_rule_proc(rules, fn):
     """Find the first matching rule_proc on fn"""
@@ -227,7 +216,49 @@ def _single_match(matcher, fn):
                     break
     return ret
 
-def jinja_env(load_paths, additional_filters=None):
+class RuleEnv:
+    def __init__(self, indir, outdir):
+        if isinstance(indir, str):
+            indir = pathlib.Path(indir)
+        if isinstance(outdir, str):
+            outdir = pathlib.Path(outdir)
+
+        self.indir = indir
+        self.outdir = outdir
+
+    def build_dir(self, rules, subdir=None):
+        directory = self.indir
+        if subdir is not None:
+            directory = directory / subdir
+
+        for fn in walk_directory(directory, self.indir):
+            rule = get_first_matching_rule_proc(rules, fn)
+            self.apply_rule_proc(rule, fn)
+
+    def get_callable_rule(self, rule):
+        """Convert a (PathMap,FileMap) pair into a callable RuleProc
+
+        If rule is already a callable, do nothing.
+        """
+        if not callable(rule):
+            def f(fn):
+                outfn = rule[0](fn)
+                inp, outp = self.indir / fn, self.outdir / outfn
+                ensure_directory(outp)
+                rule[1](inp, outp)
+            return f
+        return rule
+
+    def apply_rule_proc(self, rule_proc, fn):
+        """Apply a RuleProc to a fn with ctx.
+
+        This works for callable rule_proc's and tuples of (path_map, file_map)
+        """
+        f = self.get_callable_rule(rule_proc)
+        return f(fn)
+
+#### Jinja setup helpers
+def jinja_env(load_paths=(), load_paths_with_prefix=(), additional_filters=None):
     """Initialize a jinja env that searches all load_paths for templates.
 
     builtin templates can also be found under builtin/
@@ -235,24 +266,57 @@ def jinja_env(load_paths, additional_filters=None):
     load_paths is an iterable containing either strings to paths to search,
     or tuples containing (prefix, path) pairs.
     """
-    user_loader = jinja2.ChoiceLoader(
-            [jinja2.FileSystemLoader(path) if isinstance(path, str) else
-                jinja2.PrefixLoader(
-                    {path[0]: jinja2.FileSystemLoader(path[1])}
-                ) for path in load_paths])
-    builtin_loader = jinja2.DictLoader({'rss_base.xml': rss_base_src})
+    import jinja2
+    user_prefix_loader = jinja2.PrefixLoader(
+            {prefix: jinja2.FileSystemLoader(path)
+                for path, prefix in load_paths_with_prefix})
+
+    user_loader = jinja2.ChoiceLoader([jinja2.FileSystemLoader(path) for path in load_paths])
 
     builtin_loader = jinja2.PrefixLoader({
-        'builtin': builtin_loader
-        })
+        'builtin': jinja2.DictLoader({'rss_base.xml': rss_base_src})
+    })
 
-    loader = jinja2.ChoiceLoader([user_loader,builtin_loader])
+    loader = jinja2.ChoiceLoader([user_loader, user_prefix_loader, builtin_loader])
+
     jinja_env = jinja2.Environment(loader=loader, undefined=jinja2.StrictUndefined)
     if additional_filters is not None:
         jinja_env.filters.update(additional_filters)
+    else:
+        jinja_env.filters.update(date_filters())
+        jinja_env.filters['markdown'] = markdown_filter()
 
     return jinja_env
 
+def date_filters(date_format_str='%B %d, %Y'):
+    return {
+        'parse_date': dateutil.parser.parse,
+        'format_date': lambda x: format_date(x, date_format_str),
+        'rss_format_date': rss_date
+    }
+
+
+def markdown_filter(extensions=None, extension_configs=None):
+    import markdown
+    default_extensions = [
+        'markdown.extensions.extra',
+        'markdown.extensions.admonition',
+        'markdown.extensions.toc',
+        'markdown.extensions.codehilite',
+        'mdx_math'
+    ]
+    default_extension_configs = {
+            "mdx_math": {'enable_dollar_delimiter': True}
+    }
+
+    if extensions is None:
+        extensions = default_extensions
+
+    if extension_configs is None:
+        extension_configs = default_extension_configs
+
+    mdfilter = lambda x: markdown.markdown(x, extensions=extensions, extension_configs=extension_configs)
+    return mdfilter
 
 def format_date(x, format_str):
     """Format a datestr with a given format string"""
@@ -265,121 +329,3 @@ def rss_date(x):
     if isinstance(x, str):
         x = dateutil.parser.parse(x)
     return email.utils.format_datetime(x)
-
-
-class Environment:
-    """The main class provided for building directories.
-
-    indir and outdir are the source and build directories, and base_url
-    is the complete url of the website.
-
-    template_loader_dirs:
-        directories to be searched for jinja templates. In particular,
-        if a template refers to another template (such as via "extends"),
-        then these are the directories that will be searched. If None,
-        indir will be used.
-    mdext:
-        extensions to use in the markdown.Markdown class for processing
-        text through the markdown filter in a jinja template.
-    mdextconf:
-        The extension configuration dict (extension_configs) to be passed
-        to the markdown.Markdown class for use in the markdown filter.
-    additional_jinja_filters:
-        Additional filter functions to be made available in Jinja templates.
-    date_format_str:
-        The format string to use in the format_date filter.
-    template_render_data:
-        Context to be provided when rendering Jinja templates.
-    """
-    def __init__(self, indir, outdir, base_url, *, template_loader_dirs=None, mdext=None, mdextconf=None, additional_jinja_filters=None, date_format_str='%B %d, %Y', template_render_data=None, user_ctx=None):
-        if isinstance(indir, str):
-            indir = pathlib.Path(indir)
-        if isinstance(outdir, str):
-            outdir = pathlib.Path(outdir)
-
-        self.indir = indir
-        self.outdir = outdir
-        self.base_url = base_url
-
-
-        # Set up the markdown filter (set up extensions, then grab the
-        # markdown object)
-        if mdextconf is None:
-            mdextconf = {}
-
-        if mdext is None:
-            mdext = [
-                'markdown.extensions.extra',
-                'markdown.extensions.admonition',
-                'markdown.extensions.toc',
-                'markdown.extensions.codehilite',
-                'mdx_math'
-            ]
-            mdextconf.update({"mdx_math": {'enable_dollar_delimiter': True}})
-
-        mdfilter = lambda x: markdown.markdown(x, extensions=mdext, extension_configs=mdextconf)
-
-        # set up the jinja env
-        if template_loader_dirs is None:
-            template_loader_dirs = (str(indir),)
-        jenv = jinja_env(template_loader_dirs, additional_jinja_filters)
-
-        # add default filters to jinja env
-        jenv.filters.update({
-            'markdown': mdfilter,
-            'parse_date': dateutil.parser.parse,
-            'format_date': lambda x: format_date(x, date_format_str),
-            'rss_format_date': rss_date })
-
-        self.jenv = jenv
-
-        if template_render_data is None:
-            template_render_data = {}
-        self.template_render_data = template_render_data
-        self.template_render_data['base_url'] = base_url
-
-        if user_ctx is None:
-            self.user_ctx = {}
-        else:
-            self.user_ctx = user_ctx
-
-
-    def build_dir(self, rules, subdir=None, additional_template_render_data=None, page_collection=None, additional_user_ctx=None):
-        """Apply build rules to all files recursively in a directory.
-
-        rules:
-            A list of build rules, or a BuildRules object.
-        subdir:
-            If given, subdir must be a child of source dir. In this case, only
-            files under subdir are processed. If none, the entire source
-            dir is processed.
-        additional_template_render_data:
-            Additional data to add to the render context dictionary for jinja templates.
-        page_collection:
-            A PageCollection object. If active, it's push method will be
-            made available to jinja templates as "push_to_collection", where
-            the second argument 'additional_ctx' will be passed in automatically
-            containing 'href' and 'fullhref', the url relative to the website,
-            and complete url respectively.
-        """
-        if additional_template_render_data is not None:
-            template_render_data = self.template_render_data.copy()
-            template_render_data.update(additional_template_render_data)
-        else:
-            template_render_data = self.template_render_data
-
-        ctx = self.user_ctx.copy()
-        if additional_user_ctx:
-            ctx.update(additional_user_ctx)
-        ctx.update({'indir': self.indir, 'outdir': self.outdir, 'base_url': self.base_url,
-               'jenv': self.jenv, 'render_context': template_render_data,
-               'page_collection': page_collection})
-
-
-        directory = self.indir
-        if subdir is not None:
-            directory = directory / subdir
-
-        for fn in walk_directory(directory, self.indir):
-            rule = get_first_matching_rule_proc(rules, fn)
-            apply_rule_proc(rule, ctx, fn)
