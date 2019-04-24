@@ -25,7 +25,7 @@ rss_base_src = """
     <link>{{rss_home_page}}</link>
     <atom:link href="{{rss_link}}" rel="self" type="application/rss+xml" />
     <description>{{rss_description}}</description>
-    {% for page in pages | reverse %}
+    {% for page in pages %}
     <item>
         <title>{{page.title | e}}</title>
         <link>{{page.fullhref}}</link>
@@ -140,21 +140,8 @@ def push_page(pages,page,additional_ctx=None):
 
     pages.append(page)
 
-def by_year(pages):
-    current_year = None
-    for post in reversed(pages):
-        date = post['date']
-        if date.year != current_year:
-            if current_year is not None:
-                yield obj
-            obj = {'year': date.year, 'posts': []}
-            current_year = date.year
-
-        obj['posts'].append(post)
-    yield obj
-
 def sort_pages(pages, key='date'):
-    return sorted(pages, key=lambda x: x[key])
+    return sorted(pages, key=lambda x: x[key], reverse=True)
 
 
 
@@ -254,7 +241,6 @@ def jinja_env(load_paths=(), load_paths_with_prefix=(), additional_filters=None)
     else:
         jinja_env.filters.update(date_filters())
         jinja_env.filters['markdown'] = markdown_filter()
-        jinja_env.filters['pages_by_year'] = by_year
 
     return jinja_env
 
