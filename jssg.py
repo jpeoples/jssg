@@ -11,7 +11,6 @@ import os
 import shutil
 import email.utils
 import pathlib
-import bisect
 import fnmatch
 
 #requirements
