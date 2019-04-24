@@ -25,7 +25,7 @@ rss_base_src = """
     <link>{{rss_home_page}}</link>
     <atom:link href="{{rss_link}}" rel="self" type="application/rss+xml" />
     <description>{{rss_description}}</description>
-    {% for page in pages.all_pages() %}
+    {% for page in pages | reverse %}
     <item>
         <title>{{page.title | e}}</title>
         <link>{{page.fullhref}}</link>
@@ -118,7 +118,7 @@ class JinjaFile:
         render_context = self.render_ctx.copy()
         render_context.update(additional_ctx)
         if self.page_collection is not None:
-            render_context['push_to_collection'] = lambda x: self.page_collection.push(x, additional_ctx)
+            render_context['push_to_collection'] = lambda x: push_page(self.page_collection, x, additional_ctx)
 
         contents = inpath.open('r', encoding='utf-8').read()
         jt = self.jenv.from_string(contents)
@@ -133,59 +133,28 @@ def ignore_file(*args, **kwargs):
     pass
 
 
-class PageCollection:
-    """A class for storing information about a sorted collection of pages.
+def push_page(pages,page,additional_ctx=None):
+    if additional_ctx is not None:
+        page = page.copy()
+        page.update(additional_ctx)
 
-    Importantly, when building with Environment.build_dir, if a post_collection
-    is specified, then the push method is made available to jinja templates
-    as "push_to_collection" (taking one argument, page_dict. additional_ctx
-    is provided by jinja_file).
+    pages.append(page)
 
-    In this way, sets of files can be built, storing any desired metadata,
-    and then this metadata can be made available to other templates later.
-    This allows automated creation of archives, for example.
-    """
-    def __init__(self, sort_key='date'):
-        self.pages = []
-        self.keys = []
-        self.sort_key = sort_key
+def by_year(pages):
+    current_year = None
+    for post in reversed(pages):
+        date = post['date']
+        if date.year != current_year:
+            if current_year is not None:
+                yield obj
+            obj = {'year': date.year, 'posts': []}
+            current_year = date.year
 
-    def push(self, page_dict, additional_ctx=None):
-        """Add a page to collection, maintaining sort on self.sort_key"""
-        if additional_ctx is not None:
-            page_dict = page_dict.copy()
-            page_dict.update(additional_ctx)
+        obj['posts'].append(post)
+    yield obj
 
-        key = page_dict[self.sort_key]
-        x = bisect.bisect_left(self.keys, key)
-
-        self.keys.insert(x, key)
-        self.pages.insert(x, page_dict)
-
-    def history(self, count=20):
-        """Get the last count pages in collection, in reverse order"""
-        for i, post in enumerate(reversed(self.pages)):
-            if count is not None and i >= count:
-                break
-            yield post
-
-    def by_year(self):
-        """Get pages grouped by year, in reverse chronological order"""
-        current_year = None
-        for post in reversed(self.pages):
-            date = post['date']
-            if date.year != current_year:
-                if current_year is not None:
-                    yield obj
-                obj = {'year': date.year, 'posts': []}
-                current_year = date.year
-
-            obj['posts'].append(post)
-        yield obj
-
-    def all_pages(self):
-        """Get all pages in reverse chronological order"""
-        return self.history(count=len(self.pages))
+def sort_pages(pages, key='date'):
+    return sorted(pages, key=lambda x: x[key])
 
 
 
@@ -285,6 +254,7 @@ def jinja_env(load_paths=(), load_paths_with_prefix=(), additional_filters=None)
     else:
         jinja_env.filters.update(date_filters())
         jinja_env.filters['markdown'] = markdown_filter()
+        jinja_env.filters['pages_by_year'] = by_year
 
     return jinja_env
 
