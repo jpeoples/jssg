@@ -107,13 +107,13 @@ class JinjaFile:
 
     def add_jit_context(self, f, *args, **kwargs):
         kwargs = kwargs if kwargs is not None else {}
-        return JinjaFileNew(self.env, self.base_render_context,
+        return JinjaFile(self.env, self.base_render_context,
                 self.jit_context + [lambda e,r,i,o: f(e,r,i,o,*args,**kwargs)])
 
     def add_context(self, ctx):
         new_ctx = self.base_render_context.copy()
         new_ctx.update(ctx)
-        return JinjaFileNew(self.env, new_ctx, self.jit_context)
+        return JinjaFile(self.env, new_ctx, self.jit_context)
 
 
 
