@@ -85,44 +85,35 @@ def copy_file(inpath, outpath):
     """FileMap function copying a file directly"""
     shutil.copy(str(inpath), str(outpath))
 
+
 class JinjaFile:
-    def __init__(self, jenv, base_url, outdir, page_collection=None, render_ctx=None):
-        if render_ctx is None:
-            render_ctx = {}
-        self.jenv = jenv
-        self.base_url = base_url
-        self.outdir = outdir
-        self.page_collection = page_collection
-        self.render_ctx = render_ctx
+    def __init__(self, env, base_render_context=None, jit_context=None):
+        self.env = env
+        self.base_render_context=base_render_context if base_render_context is not None else {}
+        self.jit_context = jit_context if jit_context is not None else []
 
-    def override(self, page_collection=None, additional_ctx=None):
-        if additional_ctx is not None:
-            render_ctx = self.render_ctx.copy()
-            render_ctx.update(additional_ctx)
-        else:
-            render_ctx = self.render_ctx
-
-        if page_collection is None:
-            page_collection = self.page_collection
-
-        return JinjaFile(self.jenv, self.base_url, self.outdir, page_collection, render_ctx)
 
     def __call__(self, inpath, outpath):
-        href = outpath.relative_to(self.outdir).as_posix()
-        additional_ctx = {
-                'href': href,
-                'fullhref': self.base_url + href
-        }
-
-        render_context = self.render_ctx.copy()
-        render_context.update(additional_ctx)
-        if self.page_collection is not None:
-            render_context['push_to_collection'] = lambda x: push_page(self.page_collection, x, additional_ctx)
+        jenv = self.env['jinja']['jenv']
+        render_ctx = self.base_render_context.copy()
+        for jit in self.jit_context:
+            new_ctx = jit(self.env, render_ctx, inpath, outpath)
+            render_ctx.update(new_ctx)
 
         contents = inpath.open('r', encoding='utf-8').read()
-        jt = self.jenv.from_string(contents)
+        jt = jenv.from_string(contents)
         with outpath.open('w', encoding='utf-8') as f:
-            f.write(jt.render(render_context))
+            f.write(jt.render(render_ctx))
+
+    def add_jit_context(self, f, *args, **kwargs):
+        kwargs = kwargs if kwargs is not None else {}
+        return JinjaFileNew(self.env, self.base_render_context,
+                self.jit_context + [lambda e,r,i,o: f(e,r,i,o,*args,**kwargs)])
+
+    def add_context(self, ctx):
+        new_ctx = self.base_render_context.copy()
+        new_ctx.update(ctx)
+        return JinjaFileNew(self.env, new_ctx, self.jit_context)
 
 
 
@@ -171,26 +162,136 @@ def _single_match(matcher, fn):
                     break
     return ret
 
-class RuleEnv:
-    def __init__(self, indir, outdir):
-        if isinstance(indir, str):
-            indir = pathlib.Path(indir)
-        if isinstance(outdir, str):
-            outdir = pathlib.Path(outdir)
+class Builtins:
+    def requires(self):
+        return ()
 
-        self.indir = indir
-        self.outdir = outdir
+    def setup(self, conf, env):
+        env['input_directory'] = pathlib.Path(conf['input_directory'])
+        env['output_directory'] = pathlib.Path(conf['output_directory'])
+
+        return {
+            "rule_procs": {
+                "ignore": ignore_file,
+                "copy": (mirror, copy_file),
+            },
+            "path_maps": {
+                "mirror": mirror,
+                "to_html": to_html,
+                "remove_internal_extensions": remove_internal_extensions,
+                "replace_extensions": replace_extensions
+            },
+            "file_maps": {
+                "copy": copy_file
+            }
+        }
+
+class JinjaPlug:
+    def requires(self):
+        return ("builtin",)
+    def setup(self, conf, env):
+        jconf = conf['jinja']
+        if jconf.get('jenv') is not None:
+            env['jinja'] = {'jenv': jenv}
+        else:
+            env['jinja'] = {
+                'jenv': jinja_env(
+                    load_paths_with_prefix=jconf.get('load_paths_with_prefix', ()),
+                    load_paths=jconf.get('load_paths', ()),
+                    additional_filters=jconf.get('additional_filters')
+                )
+            }
+
+        jinja_file = JinjaFile(env, jconf.get('base_render_context', {}),
+                jconf.get('jit_context', []))
+
+        return {
+            "file_maps": {
+                "jinja": jinja_file
+            }
+        }
+
+class MarkdownFilter:
+    def requires(self):
+        return ("jinja",)
+
+    def setup(self, conf, env):
+        mconf = conf.get(markdown_filter)
+
+        if mconf is not None:
+            jconf = env['jinja']
+            mdfilter = markdown_filter(mconf.get('extensions'), mconf.get('extension_configs'))
+            jenv = jconf['jenv']
+            jenv.filters.update({"markdown_filter": mdfilter})
+
+class DateFilters:
+    def requires(self):
+        return ("builtin",)
+
+    def setup(self, conf, env):
+        dconf = conf.get('date_filters')
+        if dconf is not None:
+            date_format_string=dconf.get('date_format_string', '%B %d, %Y')
+            jconf = env['jinja']
+            jenv = jconf['jenv']
+            jenv.filters.update(date_filters(date_format_string))
+
+
+def default_plugs():
+    return {
+            "builtin": Builtins(),
+            "jinja": JinjaPlug(),
+            "markdown_filter": MarkdownFilter(),
+            "date_filters": DateFilters()
+        }
+
+
+class Struct:
+    def add_dict(self, dct):
+        if dct is not None: self.__dict__.update(dct)
+
+class Environment:
+    def __init__(self, conf, plugs=default_plugs()):
+
+        self.rule = Struct()
+        self.path = Struct()
+        self.file = Struct()
+
+        initted = set()
+        env = {}
+        for name,plug in plugs.items():
+            self._init_plug(name,plug,plugs,initted,conf,env)
+
+        self.env = env
+
+
+    def _init_plug(self, name, plug, plugs, initted, conf, env):
+        for dep in plug.requires():
+            if not dep in initted:
+                self._init_plug(dep, plugs[dep], plugs, initted,conf,env)
+
+        outputs = plug.setup(conf, env)
+        if outputs is not None:
+            self.rule.add_dict(outputs.get('rule_procs'))
+            self.file.add_dict(outputs.get('file_maps'))
+            self.path.add_dict(outputs.get('path_maps'))
+        initted.add(name)
 
     def build_dir(self, rules, subdir=None):
-        directory = self.indir
+        directory = self.env['input_directory']
+
         if subdir is not None:
             directory = directory / subdir
 
-        for fn in walk_directory(directory, self.indir):
+        for fn in walk_directory(directory, self.env['input_directory']):
             rule = get_first_matching_rule_proc(rules, fn)
-            self.apply_rule_proc(rule, fn)
+            self.build(rule, fn)
 
-    def get_callable_rule(self, rule):
+    def build(self, rule, fn):
+        f = self._get_callable_rule(rule)
+        return f(fn)
+
+    def _get_callable_rule(self, rule):
         """Convert a (PathMap,FileMap) pair into a callable RuleProc
 
         If rule is already a callable, do nothing.
@@ -198,19 +299,11 @@ class RuleEnv:
         if not callable(rule):
             def f(fn):
                 outfn = rule[0](fn)
-                inp, outp = self.indir / fn, self.outdir / outfn
+                inp, outp = self.env['input_directory'] / fn, self.env['output_directory'] / outfn
                 ensure_directory(outp)
                 rule[1](inp, outp)
             return f
         return rule
-
-    def apply_rule_proc(self, rule_proc, fn):
-        """Apply a RuleProc to a fn with ctx.
-
-        This works for callable rule_proc's and tuples of (path_map, file_map)
-        """
-        f = self.get_callable_rule(rule_proc)
-        return f(fn)
 
 #### Jinja setup helpers
 def jinja_env(load_paths=(), load_paths_with_prefix=(), additional_filters=None):
