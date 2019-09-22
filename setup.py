@@ -15,7 +15,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 
 setup(
     name='jssg',
-    version='0.1.l',
+    version='0.1.2',
     description='A basic library for static site generation',
     long_description=long_description,
     long_description_content_type='text/markdown',
@@ -43,8 +43,8 @@ setup(
     # Note that this is a string of words separated by whitespace, not a list.
     keywords='static website generation',
 
-    py_modules=['jssg'],
-    #packages=find_packages(exclude=['contrib', 'docs', 'tests']),  # Required
+    # py_modules=['jssg'],
+    packages=find_packages(exclude=['contrib', 'docs', 'tests']),  # Required
 
     python_requires='>=3.0',
     install_requires=['jinja2', 'markdown', 'python-markdown-math', 'python-dateutil', 'pygments'],
