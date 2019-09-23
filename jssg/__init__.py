@@ -51,6 +51,9 @@ class FileSys:
         return open(inf, 'r', encoding='utf-8').read()
 
     def write(self, outf, s):
+        loc = pathlib.Path(outf).parent
+        if not loc.is_dir():
+            loc.mkdir(parents=True)
         open(outf, 'w', encoding='utf-8').write(s)
 
 

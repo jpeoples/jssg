@@ -17,7 +17,7 @@ class JinjaFile:
         t = self.env.from_string(s)
         return t.render(render_context)
 
-    def full_render(self, fs, inf, outf):
+    def _get_immediate_context(self, fs, inf, outf):
         s = fs.read(inf)
         add_ctx = None
         if len(self.immediate_context) > 0:
@@ -25,6 +25,10 @@ class JinjaFile:
             #add_ctx = {}
             for ctx in self.immediate_context:
                 add_ctx.update(ctx(add_ctx, inf, outf, s))
+        return s, add_ctx
+
+    def full_render(self, fs, inf, outf):
+        s, add_ctx = self._get_immediate_context(fs, inf, outf)
         outs = self.render(s, additional_ctx=add_ctx)
         fs.write(outf, outs)
 
@@ -137,7 +141,7 @@ _rss_base_src = """
     <description>{{rss_description}}</description>
     {% for page in pages %}
     <item>
-        <title>{{page.title | e}}</title>
+        {%if page.title is defined %}<title>{{page.title | e}}</title>{%endif%}
         <link>{{page.fullhref}}</link>
         <guid isPermaLink="true">{{page.fullhref}}</guid>
         <pubDate>{{page.date | rss_format_date}}</pubDate>
