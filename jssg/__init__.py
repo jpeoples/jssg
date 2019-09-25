@@ -45,16 +45,20 @@ class PathMapper:
 
 class FileSys:
     def copy(self, inf, outf):
+        self.ensure_dir(outf)
         shutil.copy(inf, outf)
 
     def read(self, inf):
         return open(inf, 'r', encoding='utf-8').read()
 
     def write(self, outf, s):
+        self.ensure_dir(outf)
+        open(outf, 'w', encoding='utf-8').write(s)
+
+    def ensure_dir(self, outf):
         loc = pathlib.Path(outf).parent
         if not loc.is_dir():
             loc.mkdir(parents=True)
-        open(outf, 'w', encoding='utf-8').write(s)
 
 
 def list_all_files(d, rel_to=None):
