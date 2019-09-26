@@ -28,23 +28,25 @@ class TestBasicPathFunctions(unittest.TestCase):
         with self.assertRaises(ValueError):
             jssg.relative_path(infile, 'foo')
 
+    def test_remove_extensions(self):
+        infile = 'test/a.txt'
+        self.assertEqual('test/a', jssg.remove_extensions(infile))
+
 class TestPathMapper(unittest.TestCase):
-    def setUp(self):
-        self.pathmapper = jssg.PathMapper('src', 'build')
 
     def test_path_map_execute(self):
         op = jssg.mirror_path
         fn = 'test.txt'
-        inf,outf = self.pathmapper.execute(op, fn)
+        inf,outf = jssg.execute_path_map(op, fn, "src", "build")
         self.assertEqual('src/test.txt', inf)
         self.assertEqual('build/test.txt', outf)
 
 
     def test_path_mapper_execute_with_pathmap(self):
-        def my_op(fn):
+        def my_op(fn, indir, outdir):
             return 'abc.txt', 'def.txt'
         fn = 'test.txt'
-        inf,outf = self.pathmapper.execute(my_op, fn)
+        inf,outf = jssg.execute_path_map(my_op, fn, "src", "build")
         self.assertEqual('abc.txt', inf)
         self.assertEqual('def.txt', outf)
         
@@ -147,21 +149,24 @@ class TestJinjaFile(unittest.TestCase):
 
 class TestBuildEnv(unittest.TestCase):
     def test_execute(self):
-        buildenv = jssg.BuildEnv(jssg.PathMapper('a','b'), jssg.FileMapper(MockFileSystem()))
+        buildenv = jssg.BuildEnv('a','b', jssg.FileMapper(MockFileSystem()))
         buildenv.execute((self.my_pm, self.my_fm), 'blah blah')
         self.assertEqual('abc.txt def.txt', self.infoutf)
 
-    def my_pm(self, fn):
+    def my_pm(self, fn, indir, outdir):
         return 'abc.txt', 'def.txt'
 
     def my_fm(self, fs, inf, outf):
         self.infoutf = inf + ' ' + outf
 
+    def my_fm_2(self, inf, outf):
+        self.infoutf = inf + ' ' + outf
+
     def test_build(self):
-        buildenv = jssg.BuildEnv(jssg.PathMapper('a','b'), jssg.FileMapper(MockFileSystem()))
+        buildenv = jssg.BuildEnv('a','b', jssg.FileMapper(MockFileSystem()))
         rules = [
             ('*.txt', None),
-            ('*.pdf', (self.my_pm, self.my_fm))
+            ('*.pdf', (self.my_pm, self.my_fm_2))
         ]
 
         buildenv.build(rules, ['a.pdf'])

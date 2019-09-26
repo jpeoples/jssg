@@ -6,6 +6,57 @@ import types
 
 from . import jinja_utils
 
+class Environment:
+    """The high level interface for jssg"""
+    def __init__(self, build_env, jinja_file=None):
+        self.build_env = build_env
+        self.jinja_file = jinja_file
+
+        if self.jinja_file is None:
+            self.jinja_filters = {
+                'format_date': jinja_utils.date_formatter(),
+                'rss_format_date': jinja_utils.rss_date,
+                'parse_date': jinja_utils.parse_date,
+            }
+            try:
+                import markdown
+                self.jinja_filters["markdown"] = jinja_utils.markdown_filter(include_mdx_math=True)
+            except ImportError:
+                pass
+            self.jinja_search_paths = (".", )
+            self.jinja_search_prefix_paths = ()
+            self.jinja_additional_loaders = [jinja_utils.rss_loader()]
+            self.jinja_base_context = {}
+            self.jinja_immediate_context = []
+            
+    @classmethod
+    def default(cls, indir, outdir):
+        return cls(BuildEnv(indir, outdir))
+
+    @property
+    def jinja(self):
+        if self.jinja_file is None:
+            jenv = jinja_utils.jinja_env(self.jinja_search_paths, self.jinja_search_paths, self.jinja_additional_loaders, filters=self.jinja_filters)
+            self.jinja_file = jinja_utils.JinjaFile(jenv, self.jinja_base_context, self.jinja_immediate_context)
+        return self.jinja_file
+
+    @property
+    def ignore_file(self):
+        return None
+
+    @property
+    def mirror_file(self):
+        return (mirror_path, copy_file)
+
+    def execute(self, rp, fn):
+        self.build_env.execute(rp, fn)
+
+    def build(self, rules, files=""):
+        self.build_env.build(rules, files)
+
+    
+
+
 def mirror_path(fn):
     return fn
 
@@ -18,6 +69,8 @@ def replace_extensions(suff):
         return path.with_suffix(suff).as_posix()
     return op
 
+remove_extensions = replace_extensions("")
+
 def remove_internal_extensions(fn):
     pathobj = pathlib.Path(fn)
     op = replace_extensions(pathobj.suffix)
@@ -26,21 +79,14 @@ def remove_internal_extensions(fn):
 def relative_path(fn, directory):
     return pathlib.Path(fn).relative_to(directory).as_posix()
 
-class PathMapper:
-    def __init__(self, indir, outdir):
-        self.indir = indir
-        self.outdir = outdir
-
-    def execute(self, op, fn):
-        try:
-            inpath, outpath = op(fn)
-            return inpath, outpath
-        # If it takes fn and returns an outfn, we get a value error
-        # due to too many values to unpack!
-        except ValueError:
-            outfn = op(fn)
-            return (pathlib.Path(self.indir, fn).as_posix(),
-                    pathlib.Path(self.outdir, outfn).as_posix())
+def execute_path_map(op, fn, indir, outdir):
+    try:
+        inpath, outpath = op(fn, indir, outdir)
+        return inpath, outpath
+    except TypeError:
+        outfn = op(fn)
+        return (pathlib.Path(indir, fn).as_posix(),
+                pathlib.Path(outdir, outfn).as_posix())
 
 
 class FileSys:
@@ -77,10 +123,14 @@ class FileMapper:
 
     def execute(self, op, inpath, outpath):
         try:
-            op(self.filesys, inpath, outpath)
-        # If it is a string func we get a TypeError due to too many args
-        except TypeError as e:
-            self.wrapped_execute(op, inpath, outpath)
+            op(inpath, outpath)
+        except TypeError:
+            try:
+                op(self.filesys, inpath, outpath)
+            # If it is a string func we get a TypeError due to too many args
+            except TypeError as e:
+                assert(callable(op))
+                self.wrapped_execute(op, inpath, outpath)
 
     def wrapped_execute(self, op, inpath, outpath):
         s = self.filesys.read(inpath)
@@ -95,22 +145,22 @@ def copy_file(fs, inpath, outpath):
 
 
 class BuildEnv:
-    def __init__(self, pathmapper, filemapper=None):
-        self.pathmapper = pathmapper
+    def __init__(self, indir, outdir, filemapper=None):
+        self.indir = indir
+        self.outdir = outdir
         self.filemapper = filemapper if filemapper is not None else FileMapper()
 
-    @classmethod
-    def default(cls, indir, outdir):
-        return cls(PathMapper(indir, outdir))
-
     def execute(self, rp, fn):
-        pm, fm = rp
-        inf, outf = self.pathmapper.execute(pm, fn)
-        self.filemapper.execute(fm, inf, outf)
+        try:
+            rp(fn, self.indir, self.outdir)
+        except TypeError:
+            pm, fm = rp
+            inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
+            self.filemapper.execute(fm, inf, outf)
 
-    def build(self, rules, files):
+    def build(self, rules, files=""):
         if isinstance(files, str):
-            files = self.filemapper.filesys.list_all_files(files)
+            files = list_all_files(os.path.join(self.indir, files), rel_to=self.indir)
         for file in files:
             rule = first_matching_rule(rules, file)
             if rule is not None:
