@@ -141,7 +141,7 @@ _rss_base_src = """
     <description>{{rss_description}}</description>
     {% for page in pages %}
     <item>
-        {%if page.title is defined %}<title>{{page.title | e}}</title>{%endif%}
+        {%if page.title is defined %}<title>{{page.title | striptags | e}}</title>{%endif%}
         <link>{{page.fullhref}}</link>
         <guid isPermaLink="true">{{page.fullhref}}</guid>
         <pubDate>{{page.date | rss_format_date}}</pubDate>
