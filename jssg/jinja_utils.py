@@ -114,7 +114,6 @@ def markdown_filter(extensions=None, extension_configs=None, include_mdx_math=Fa
         'mdx_math'
     ]
     default_extension_configs = {
-            "mdx_math": {'enable_dollar_delimiter': True},
             'markdown.extensions.codehilite': {'guess_lang': False}
     }
 
@@ -124,8 +123,9 @@ def markdown_filter(extensions=None, extension_configs=None, include_mdx_math=Fa
             extensions = extensions[:-1]
 
     if extension_configs is None:
+        extension_configs = default_extension_configs
         if include_mdx_math:
-            extension_configs = default_extension_configs
+            extension_configs['mdx_math'] = {'enable_dollar_delimiter': True}
 
     mdfilter = lambda x: markdown.markdown(x, extensions=extensions, extension_configs=extension_configs)
     return mdfilter
