@@ -17,20 +17,22 @@ class JinjaFile:
         t = self.env.from_string(s)
         return t.render(render_context)
 
-    def _get_immediate_context(self, fs, inf, outf):
-        s = fs.read(inf)
-        add_ctx = None
+    def get_immediate_context(self, fs, inf, outf, s):
+        add_ctx = {}
         if len(self.immediate_context) > 0:
             add_ctx = self.render_context.copy()
             #add_ctx = {}
             for ctx in self.immediate_context:
                 add_ctx.update(ctx(add_ctx, inf, outf, s))
-        return s, add_ctx
+        return add_ctx
 
     def full_render(self, fs, inf, outf):
-        s, add_ctx = self._get_immediate_context(fs, inf, outf)
+        s = fs.read(inf)
+        add_ctx = self.get_immediate_context(fs, inf, outf, s)
         outs = self.render(s, additional_ctx=add_ctx)
         fs.write(outf, outs)
+
+    __call__ = full_render
 
     def add_render_context(self, ctx):
         rctx = self.render_context.copy()

@@ -119,6 +119,14 @@ class TestJinjaFile(unittest.TestCase):
         self.assertEqual(self.filesys.wrote_value, "my_var = 10")
         self.assertEqual("read(abc.txt) write(def.txt) ", self.filesys.log)
 
+    def test_jinja_file_full_render_same_as_call(self):
+        self.filesys.read_value = "my_var = {{my_var}}"
+        self.jinja_file.full_render(self.filesys, "abc.txt", "def.txt")
+        wrote_value = self.filesys.wrote_value 
+        self.jinja_file(self.filesys, "abc.txt", "def.txt")
+        self.assertEqual(self.filesys.wrote_value, wrote_value)
+        self.assertEqual("read(abc.txt) write(def.txt) "*2, self.filesys.log)
+
     def test_add_immediate_context(self):
         self.filesys.read_value = "infile = {{infile}}"
         jinja_file = self.jinja_file.add_immediate_context(self.my_ctx)
