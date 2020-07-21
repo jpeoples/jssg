@@ -142,6 +142,8 @@ def copy_file(fs, inpath, outpath):
     fs.copy(inpath, outpath)
 
 
+class BuildRule:
+    pass
 
 
 class BuildEnv:
@@ -160,8 +162,16 @@ class BuildEnv:
             self.filemapper.execute(fm, inf, outf)
 
     def translate_to_execution(self, rule, file):
+        if isinstance(rule, BuildRule):
+            execution, data = rule(fn, build_env)
+            self.add_execution(execution, data)
         if rule is not None:
-            self.execution_sequence.append((rule, file))
+            self.add_execution(lambda state: self.execute(rule, file))
+
+    def add_execution(self, execution, data=None):
+        self.execution_sequence.append(execution)
+        if data is not None:
+            self.execution_state.append(data)
 
     def build(self, rules, files=""):
         if isinstance(files, str):
@@ -173,14 +183,14 @@ class BuildEnv:
         self.flush_execution()
 
     def flush_execution(self):
-        for rp, fn in self.execution_sequence:
-            self.execute(rp, fn)
+        for ex in self.execution_sequence:
+            ex(self.execution_state)
 
         self.reset_state()
 
     def reset_state(self):
         self.execution_sequence = []
-        self.execution_state = {}
+        self.execution_state = []
 
 def first_matching_rule(rules, path, default=None):
     for (rule, result) in rules:
