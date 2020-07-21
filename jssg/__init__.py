@@ -142,7 +142,7 @@ def copy_file(fs, inpath, outpath):
     fs.copy(inpath, outpath)
 
 
-class BuildRule:
+class ExecutionRule:
     pass
 
 
@@ -154,15 +154,15 @@ class BuildEnv:
         self.reset_state()
 
     def execute(self, rp, fn):
-        try:
-            rp(fn, self.indir, self.outdir)
-        except TypeError:
-            pm, fm = rp
-            inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
-            self.filemapper.execute(fm, inf, outf)
+        #try:
+        #    rp(fn, self.indir, self.outdir)
+        #except TypeError:
+        pm, fm = rp
+        inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
+        self.filemapper.execute(fm, inf, outf)
 
     def translate_to_execution(self, rule, file):
-        if isinstance(rule, BuildRule):
+        if isinstance(rule, ExecutionRule):
             execution, data = rule(fn, build_env)
             self.add_execution(execution, data)
         if rule is not None:
