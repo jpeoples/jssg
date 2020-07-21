@@ -153,20 +153,24 @@ class BuildEnv:
         self.filemapper = filemapper if filemapper is not None else FileMapper()
         self.reset_state()
 
-    def execute(self, rp, fn):
-        #try:
-        #    rp(fn, self.indir, self.outdir)
-        #except TypeError:
-        pm, fm = rp
-        inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
-        self.filemapper.execute(fm, inf, outf)
+    #def execute(self, rp, fn):
+    #    #try:
+    #    #    rp(fn, self.indir, self.outdir)
+    #    #except TypeError:
+    #    pm, fm = rp
+    #    inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
+    #    self.filemapper.execute(fm, inf, outf)
 
     def translate_to_execution(self, rule, file):
+        if rule is None: return
+        pm, rule = rule
+        inf, outf = execute_path_map(pm, file, self.indir, self.outdir)
         if isinstance(rule, ExecutionRule):
-            execution, data = rule(fn, build_env)
+            execution, data = rule(inf, outf, self.file_mapper)
             self.add_execution(execution, data)
-        if rule is not None:
-            self.add_execution(lambda state: self.execute(rule, file))
+            return
+
+        self.add_execution(lambda state: self.filemapper.execute(rule, inf, outf))
 
     def add_execution(self, execution, data=None):
         self.execution_sequence.append(execution)
