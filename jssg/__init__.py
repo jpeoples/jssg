@@ -149,6 +149,7 @@ class BuildEnv:
         self.indir = indir
         self.outdir = outdir
         self.filemapper = filemapper if filemapper is not None else FileMapper()
+        self.reset_state()
 
     def execute(self, rp, fn):
         try:
@@ -164,8 +165,18 @@ class BuildEnv:
         for file in files:
             rule = first_matching_rule(rules, file)
             if rule is not None:
-                self.execute(rule, file)
+                self.execution_sequence.append((rule, file))
+                #self.execute(rule, file)
 
+        self.flush_execution()
+
+    def flush_execution(self):
+        for rp, fn in self.execution_sequence:
+            self.execute(rp, fn)
+
+    def reset_state(self):
+        self.execution_sequence = []
+        self.execution_state = {}
 
 def first_matching_rule(rules, path, default=None):
     for (rule, result) in rules:
