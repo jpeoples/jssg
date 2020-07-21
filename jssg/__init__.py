@@ -5,6 +5,7 @@ import pathlib
 import types
 
 from . import jinja_utils
+from .execution_rule import ExecutionRule
 
 class Environment:
     """The high level interface for jssg"""
@@ -142,8 +143,6 @@ def copy_file(fs, inpath, outpath):
     fs.copy(inpath, outpath)
 
 
-class ExecutionRule:
-    pass
 
 
 class BuildEnv:
@@ -166,7 +165,8 @@ class BuildEnv:
         pm, rule = rule
         inf, outf = execute_path_map(pm, file, self.indir, self.outdir)
         if isinstance(rule, ExecutionRule):
-            execution, data = rule(inf, outf, self.file_mapper)
+            print("Executing ExecutionRule")
+            execution, data = rule(self.filemapper.filesys, inf, outf)
             self.add_execution(execution, data)
             return
 

@@ -1,7 +1,9 @@
+from .execution_rule import ExecutionRule
+
 import dateutil.parser
 import email.utils
 
-class JinjaFile:
+class JinjaFile(ExecutionRule):
     def __init__(self, env, render_context={}, immediate_context=[]):
         self.env = env
         self.render_context = render_context
@@ -32,7 +34,14 @@ class JinjaFile:
         outs = self.render(s, additional_ctx=add_ctx)
         fs.write(outf, outs)
 
-    __call__ = full_render
+    #__call__ = full_render
+
+    def __call__(self, fs, inf, outf):
+        execution = lambda state: self.full_render(fs, inf, outf)
+        state = None
+        return execution, state
+
+
 
     def add_render_context(self, ctx):
         rctx = self.render_context.copy()
