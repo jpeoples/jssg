@@ -159,20 +159,24 @@ class BuildEnv:
             inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
             self.filemapper.execute(fm, inf, outf)
 
+    def translate_to_execution(self, rule, file):
+        if rule is not None:
+            self.execution_sequence.append((rule, file))
+
     def build(self, rules, files=""):
         if isinstance(files, str):
             files = list_all_files(os.path.join(self.indir, files), rel_to=self.indir)
         for file in files:
             rule = first_matching_rule(rules, file)
-            if rule is not None:
-                self.execution_sequence.append((rule, file))
-                #self.execute(rule, file)
+            self.translate_to_execution(rule, file)
 
         self.flush_execution()
 
     def flush_execution(self):
         for rp, fn in self.execution_sequence:
             self.execute(rp, fn)
+
+        self.reset_state()
 
     def reset_state(self):
         self.execution_sequence = []
