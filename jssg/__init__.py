@@ -151,31 +151,29 @@ class BuildEnv:
         self.outdir = outdir
         self.filemapper = filemapper if filemapper is not None else FileMapper()
         self.reset_state()
+        self.listeners = {}
 
-    #def execute(self, rp, fn):
-    #    #try:
-    #    #    rp(fn, self.indir, self.outdir)
-    #    #except TypeError:
-    #    pm, fm = rp
-    #    inf, outf = execute_path_map(pm, fn, self.indir, self.outdir)
-    #    self.filemapper.execute(fm, inf, outf)
+    def add_listener(self, name, listener):
+        self.listeners[name] = listener
+
 
     def translate_to_execution(self, rule, file):
         if rule is None: return
         pm, rule = rule
         inf, outf = execute_path_map(pm, file, self.indir, self.outdir)
         if isinstance(rule, ExecutionRule):
-            print("Executing ExecutionRule")
             execution, data = rule(self.filemapper.filesys, inf, outf)
-            self.add_execution(execution, data)
+            if data is not None:
+                for l in self.listeners.values():
+                    if hasattr(l, "on_data_return"):
+                        l.on_data_return(inf, outf, data)
+            self.add_execution(execution)
             return
 
         self.add_execution(lambda state: self.filemapper.execute(rule, inf, outf))
 
-    def add_execution(self, execution, data=None):
+    def add_execution(self, execution):
         self.execution_sequence.append(execution)
-        if data is not None:
-            self.execution_state.append(data)
 
     def build(self, rules, files=""):
         if isinstance(files, str):
@@ -187,14 +185,17 @@ class BuildEnv:
         self.flush_execution()
 
     def flush_execution(self):
+        exec_state = {}
+        for name, l in self.listeners.items():
+            if hasattr(l, 'before_execute'):
+                exec_state[name] = l.before_execute()
         for ex in self.execution_sequence:
-            ex(self.execution_state)
+            ex(exec_state)
 
         self.reset_state()
 
     def reset_state(self):
         self.execution_sequence = []
-        self.execution_state = []
 
 def first_matching_rule(rules, path, default=None):
     for (rule, result) in rules:
