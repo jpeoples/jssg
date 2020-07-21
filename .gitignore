@@ -1,5 +1,6 @@
 *.egg-info
 *__pycache__*
+*.swp
 .vscode/
 Pipfile
 Pipfile.lock
