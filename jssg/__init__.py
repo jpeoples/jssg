@@ -188,6 +188,7 @@ class BuildEnv:
         for name, l in self.listeners.items():
             if hasattr(l, 'before_execute'):
                 exec_state[name] = l.before_execute()
+
         for ex in self.execution_sequence:
             ex(exec_state)
 

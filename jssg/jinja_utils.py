@@ -14,7 +14,7 @@ class JinjaFile(ExecutionRule):
             render_context = self.render_context.copy()
             render_context.update(additional_ctx)
         else:
-            render_context = self.render_context
+            render_context = self.render_context.copy()
 
         t = self.env.from_string(s)
         return t, render_context
@@ -47,16 +47,16 @@ class JinjaFile(ExecutionRule):
 
         def update_context(state):
             ctx = render_context.copy()
-            assert 'globals' not in ctx
-            ctx['globals'] = state
+            assert 'user_context' not in ctx
+            ctx['user_context'] = state
             return ctx
 
         def finish_render(state):
             s = t.render(update_context(state))
             fs.write(outf, s)
 
-        execution = lambda state: finish_render(update_context(state))
-        state = dict(type="jinja_template", context=render_context, template=t)
+        execution = lambda state: finish_render(state)
+        state = dict(type="jinja_template", context=render_context.copy(), template=t)
         return execution, state
 
 
