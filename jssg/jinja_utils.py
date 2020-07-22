@@ -9,7 +9,7 @@ class JinjaFile(ExecutionRule):
         self.render_context = render_context
         self.immediate_context = immediate_context
 
-    def render(self, s, additional_ctx=None):
+    def pre_render(self, s, additional_ctx=None):
         if additional_ctx:
             render_context = self.render_context.copy()
             render_context.update(additional_ctx)
@@ -17,6 +17,10 @@ class JinjaFile(ExecutionRule):
             render_context = self.render_context
 
         t = self.env.from_string(s)
+        return t, render_context
+
+    def render(self, s, additional_ctx=None):
+        t, render_context = self.pre_render(s, additional_ctx)
         return t.render(render_context)
 
     def get_immediate_context(self, fs, inf, outf, s):
@@ -37,8 +41,22 @@ class JinjaFile(ExecutionRule):
     #__call__ = full_render
 
     def __call__(self, fs, inf, outf):
-        execution = lambda state: self.full_render(fs, inf, outf)
-        state = None
+        s = fs.read(inf)
+        add_ctx = self.get_immediate_context(fs, inf, outf, s)
+        t, render_context = self.pre_render(s, additional_ctx=add_ctx)
+
+        def update_context(state):
+            ctx = render_context.copy()
+            assert 'globals' not in ctx
+            ctx['globals'] = state
+            return ctx
+
+        def finish_render(state):
+            s = t.render(update_context(state))
+            fs.write(outf, s)
+
+        execution = lambda state: finish_render(update_context(state))
+        state = dict(type="jinja_template", context=render_context, template=t)
         return execution, state
 
 

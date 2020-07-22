@@ -161,16 +161,15 @@ class BuildEnv:
         if rule is None: return
         pm, rule = rule
         inf, outf = execute_path_map(pm, file, self.indir, self.outdir)
-        if isinstance(rule, ExecutionRule):
-            execution, data = rule(self.filemapper.filesys, inf, outf)
-            if data is not None:
-                for l in self.listeners.values():
-                    if hasattr(l, "on_data_return"):
-                        l.on_data_return(inf, outf, data)
-            self.add_execution(execution)
-            return
+        rule = ExecutionRule.wrap(rule)
+        execution, data = rule(self.filemapper.filesys, inf, outf)
+        if data is not None:
+            for l in self.listeners.values():
+                if hasattr(l, "on_data_return"):
+                    l.on_data_return(inf, outf, data)
+        self.add_execution(execution)
+        return
 
-        self.add_execution(lambda state: self.filemapper.execute(rule, inf, outf))
 
     def add_execution(self, execution):
         self.execution_sequence.append(execution)
