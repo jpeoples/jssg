@@ -45,18 +45,24 @@ class JinjaFile(ExecutionRule):
         add_ctx = self.get_immediate_context(fs, inf, outf, s)
         t, render_context = self.pre_render(s, additional_ctx=add_ctx)
 
-        def update_context(state):
-            ctx = render_context.copy()
-            assert 'user_context' not in ctx
-            ctx['user_context'] = state
-            return ctx
+        mod = t.make_module(render_context)
 
+        # def update_context(state):
+        #     ctx = render_context.copy()
+        #     assert 'user_context' not in ctx
+        #     ctx['user_context'] = state
+        #     return ctx
+
+        # def finish_render(state):
+        #     s = t.render(update_context(state))
+        #     fs.write(outf, s)
+
+        #execution = lambda state: finish_render(state)
         def finish_render(state):
-            s = t.render(update_context(state))
+            s = mod.final_content(state)
             fs.write(outf, s)
-
         execution = lambda state: finish_render(state)
-        state = dict(type="jinja_template", context=render_context.copy(), template=t)
+        state = dict(type="jinja_template", context=render_context.copy(), template=mod)
         return execution, state
 
 
