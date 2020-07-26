@@ -3,11 +3,27 @@ from .execution_rule import ExecutionRule
 import dateutil.parser
 import email.utils
 
+class _JinjaFileClassicWrapper(ExecutionRule):
+    def __init__(self, jf):
+        self.jf = jf
+
+    def __call__(self, fs, inf, outf):
+        state = None
+        # Simply add the new render context and call the classic render
+        execution = lambda state: self.jf.add_render_context(dict(user_context=state)).full_render(fs, inf, outf)
+        return execution, state
+
+
+# TODO Simplify this logic dramatically
 class JinjaFile(ExecutionRule):
     def __init__(self, env, render_context={}, immediate_context=[]):
         self.env = env
         self.render_context = render_context
         self.immediate_context = immediate_context
+
+    @property
+    def as_layout(self):
+        return _JinjaFileClassicWrapper(self)
 
     def pre_render(self, s, additional_ctx=None):
         if additional_ctx:
@@ -40,29 +56,33 @@ class JinjaFile(ExecutionRule):
 
     #__call__ = full_render
 
+    # TODO Make this not direct call....
     def __call__(self, fs, inf, outf):
+        # Data mode, so load the template
         s = fs.read(inf)
         add_ctx = self.get_immediate_context(fs, inf, outf, s)
         t, render_context = self.pre_render(s, additional_ctx=add_ctx)
 
-        mod = t.make_module(render_context)
+        tmod = t.make_module(render_context)
+        layout = self.env.get_template(tmod.content_layout)
 
-        # def update_context(state):
-        #     ctx = render_context.copy()
-        #     assert 'user_context' not in ctx
-        #     ctx['user_context'] = state
-        #     return ctx
 
-        # def finish_render(state):
-        #     s = t.render(update_context(state))
-        #     fs.write(outf, s)
 
-        #execution = lambda state: finish_render(state)
+        def update_context(state):
+            ctx = render_context.copy()
+            assert 'user_context' not in ctx
+            ctx['user_context'] = state
+            return ctx
+
         def finish_render(state):
-            s = mod.final_content(state)
+            ctx = update_context(state)
+            ctx['data_template'] = tmod
+            s = layout.render(ctx)
             fs.write(outf, s)
+
+        # TODO Simplify all this stuff omg
         execution = lambda state: finish_render(state)
-        state = dict(type="jinja_template", context=render_context.copy(), template=mod)
+        state = dict(type="jinja_template", context=render_context.copy(), template=tmod)
         return execution, state
 
 
@@ -176,7 +196,7 @@ _rss_base_src = """
     <description>{{rss_description}}</description>
     {% for page in pages %}
     <item>
-        {%if page.title is defined %}<title>{{page.title | striptags | e}}</title>{%endif%}
+        {%if page.title is defined and page.title is not none %}<title>{{page.title | striptags | e}}</title>{%endif%}
         <link>{{page.fullhref}}</link>
         <guid isPermaLink="true">{{page.fullhref}}</guid>
         <pubDate>{{page.date | rss_format_date}}</pubDate>
