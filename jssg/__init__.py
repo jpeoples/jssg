@@ -17,7 +17,7 @@ class Environment:
             self.jinja_filters = {
                 'format_date': jinja_utils.date_formatter(),
                 'rss_format_date': jinja_utils.rss_date,
-                'parse_date': jinja_utils.parse_date,
+                # 'parse_date': jinja_utils.parse_date,
             }
             try:
                 import markdown
