@@ -3,99 +3,115 @@ from .execution_rule import ExecutionRule
 import dateutil.parser
 import email.utils
 
-class _JinjaFileClassicWrapper(ExecutionRule):
-    def __init__(self, jf):
-        self.jf = jf
+class Context:
+    def __init__(self, ctx=None, imm=None):
+        self.render_context = ctx if ctx else {}
+        self.immediate_context = imm if imm else []
+
+    # regular context handling
+    def add(self, ctx):
+        if ctx is None: return self
+
+        rctx = self.render_context.copy()
+        rctx.update(ctx)
+        return Context(rctx, self.immediate_context)
+
+    def as_dict(self, additional_ctx=None):
+        return self.add(additional_ctx).render_context
+
+
+    # immediate context handling
+    def add_immediate(self, ctx):
+        if ctx is None: return self
+
+        imm_ctx = self.immediate_context.copy()
+        imm_ctx.append(ctx)
+        return Context(self.render_context, imm_ctx)
+
+
+    def get_immediate(self, fs, inf, outf, s):
+        add_ctx = {}
+        if len(self.immediate_context) > 0:
+            #add_ctx = self.render_context.copy()
+            #add_ctx = {}
+            for ctx in self.immediate_context:
+                add_ctx.update(ctx(self.render_context, inf, outf, s))
+        return add_ctx
+
+    def empty_immediate(self):
+        return Context(self.render_context)
+
+    # with immediate context converts immediate context to regular
+    # context
+    def with_immediate(self, fs, inf, outf, s):
+        return self.add(self.get_immediate(fs, inf, outf, s)).empty_immediate()
+
+    def render(self, template, additional_ctx=None):
+        return template.render(self.as_dict(additional_ctx))
+
+class EnvWrapper:
+    def __init__(self, env):
+        self.env = env
+
+    # Template loading
+    def template_from_string(self, s):
+        return self.env.from_string(s)
+
+    def load_template(self, name):
+        return self.env.get_template(name)
+
+    def as_module(self, template, ctx):
+        return template.make_module(ctx.as_dict())
+
+
+class JinjaDataFile(ExecutionRule):
+    def __init__(self, env, ctx):
+        self.env = env
+        self.ctx = ctx
+
+    def __call__(self, fs, inf, outf):
+        s = fs.read(inf)
+        t = self.env.template_from_string(s)
+        ctx = self.ctx.with_immediate(fs, inf, outf, s)
+        tmod = self.env.as_module(t, ctx)
+        layout = self.env.load_template(tmod.content_layout)
+
+        execution = lambda state: fs.write(outf,
+                ctx.add(dict(user_context=state, data_template=tmod)).render(layout))
+
+        state = dict(type="jinja_template", context=ctx.as_dict(), template=tmod)
+        return execution, state
+
+class JinjaLayoutFile(ExecutionRule):
+    def __init__(self, env, ctx):
+        self.env = env
+        self.ctx = ctx
 
     def __call__(self, fs, inf, outf):
         state = None
-        # Simply add the new render context and call the classic render
-        execution = lambda state: self.jf.add_render_context(dict(user_context=state)).full_render(fs, inf, outf)
+        s = fs.read(inf)
+        t = self.env.template_from_string(s)
+        ctx = self.ctx.with_immediate(fs, inf, outf, s)
+        execution = lambda state: fs.write(outf, ctx.add(dict(user_context=state)).render(t))
         return execution, state
+
 
 
 # TODO Simplify this logic dramatically
 class JinjaFile(ExecutionRule):
-    def __init__(self, env, render_context={}, immediate_context=[]):
+    def __init__(self, env, ctx):
         self.env = env
-        self.render_context = render_context
-        self.immediate_context = immediate_context
+        self.ctx = ctx
+
 
     @property
     def as_layout(self):
-        return _JinjaFileClassicWrapper(self)
+        return JinjaLayoutFile(self.env, self.ctx)
 
-    def pre_render(self, s, additional_ctx=None):
-        if additional_ctx:
-            render_context = self.render_context.copy()
-            render_context.update(additional_ctx)
-        else:
-            render_context = self.render_context.copy()
-
-        t = self.env.from_string(s)
-        return t, render_context
-
-    def render(self, s, additional_ctx=None):
-        t, render_context = self.pre_render(s, additional_ctx)
-        return t.render(render_context)
-
-    def get_immediate_context(self, fs, inf, outf, s):
-        add_ctx = {}
-        if len(self.immediate_context) > 0:
-            add_ctx = self.render_context.copy()
-            #add_ctx = {}
-            for ctx in self.immediate_context:
-                add_ctx.update(ctx(add_ctx, inf, outf, s))
-        return add_ctx
-
-    def full_render(self, fs, inf, outf):
-        s = fs.read(inf)
-        add_ctx = self.get_immediate_context(fs, inf, outf, s)
-        outs = self.render(s, additional_ctx=add_ctx)
-        fs.write(outf, outs)
-
-    #__call__ = full_render
-
-    # TODO Make this not direct call....
     def __call__(self, fs, inf, outf):
-        # Data mode, so load the template
-        s = fs.read(inf)
-        add_ctx = self.get_immediate_context(fs, inf, outf, s)
-        t, render_context = self.pre_render(s, additional_ctx=add_ctx)
-
-        tmod = t.make_module(render_context)
-        layout = self.env.get_template(tmod.content_layout)
+        return JinjaDataFile(self.env, self.ctx)(fs, inf, outf)
 
 
-
-        def update_context(state):
-            ctx = render_context.copy()
-            assert 'user_context' not in ctx
-            ctx['user_context'] = state
-            return ctx
-
-        def finish_render(state):
-            ctx = update_context(state)
-            ctx['data_template'] = tmod
-            s = layout.render(ctx)
-            fs.write(outf, s)
-
-        # TODO Simplify all this stuff omg
-        execution = lambda state: finish_render(state)
-        state = dict(type="jinja_template", context=render_context.copy(), template=tmod)
-        return execution, state
-
-
-
-    def add_render_context(self, ctx):
-        rctx = self.render_context.copy()
-        rctx.update(ctx)
-        return JinjaFile(self.env, rctx, self.immediate_context)
-
-    def add_immediate_context(self, ctx):
-        imm_ctx = self.immediate_context.copy()
-        imm_ctx.append(ctx)
-        return JinjaFile(self.env, self.render_context, imm_ctx)
 
 #### Jinja setup helpers
 def jinja_env(search_paths=(), prefix_paths=(), additional_loaders=None, filters=None):

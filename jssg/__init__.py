@@ -9,7 +9,7 @@ from .execution_rule import ExecutionRule
 
 class Environment:
     """The high level interface for jssg"""
-    def __init__(self, build_env, jinja_file=None):
+    def __init__(self, build_env, jinja_file=None, **kwargs):
         self.build_env = build_env
         self.jinja_file = jinja_file
 
@@ -27,18 +27,20 @@ class Environment:
             self.jinja_search_paths = (".", )
             self.jinja_search_prefix_paths = ()
             self.jinja_additional_loaders = [jinja_utils.rss_loader()]
-            self.jinja_base_context = {}
-            self.jinja_immediate_context = []
+            #self.jinja_base_context = jinja_utils.Context()
+            self.jinja_base_context = kwargs.pop('jinja_base_context', jinja_utils.Context())
+            #self.jinja_base_context = {}
+            #self.jinja_immediate_context = []
             
     @classmethod
-    def default(cls, indir, outdir):
-        return cls(BuildEnv(indir, outdir))
+    def default(cls, indir, outdir, **kwargs):
+        return cls(BuildEnv(indir, outdir), **kwargs)
 
     @property
     def jinja(self):
         if self.jinja_file is None:
             jenv = jinja_utils.jinja_env(self.jinja_search_paths, self.jinja_search_paths, self.jinja_additional_loaders, filters=self.jinja_filters)
-            self.jinja_file = jinja_utils.JinjaFile(jenv, self.jinja_base_context, self.jinja_immediate_context)
+            self.jinja_file = jinja_utils.JinjaFile(jinja_utils.EnvWrapper(jenv), self.jinja_base_context)
         return self.jinja_file
 
     @property
