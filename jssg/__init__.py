@@ -6,6 +6,7 @@ import types
 
 from . import jinja_utils
 from .execution_rule import ExecutionRule
+from .jinja_utils import JinjaRenderable
 
 class Environment:
     """The high level interface for jssg"""
@@ -40,7 +41,7 @@ class Environment:
     def jinja(self):
         if self.jinja_file is None:
             jenv = jinja_utils.jinja_env(self.jinja_search_paths, self.jinja_search_paths, self.jinja_additional_loaders, filters=self.jinja_filters)
-            self.jinja_file = jinja_utils.JinjaFile(jinja_utils.EnvWrapper(jenv), self.jinja_base_context)
+            self.jinja_file = jinja_utils.JinjaFile(jenv, self.jinja_base_context)
         return self.jinja_file
 
     @property

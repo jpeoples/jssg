@@ -29,13 +29,13 @@ class Context:
         return Context(self.render_context, imm_ctx)
 
 
-    def get_immediate(self, fs, inf, outf, s):
+    def get_immediate(self, fs, inf, outf):
         add_ctx = {}
         if len(self.immediate_context) > 0:
             #add_ctx = self.render_context.copy()
             #add_ctx = {}
             for ctx in self.immediate_context:
-                add_ctx.update(ctx(self.render_context, inf, outf, s))
+                add_ctx.update(ctx(self.render_context, inf, outf))
         return add_ctx
 
     def empty_immediate(self):
@@ -43,61 +43,51 @@ class Context:
 
     # with immediate context converts immediate context to regular
     # context
-    def with_immediate(self, fs, inf, outf, s):
-        return self.add(self.get_immediate(fs, inf, outf, s)).empty_immediate()
+    def with_immediate(self, fs, inf, outf):
+        return self.add(self.get_immediate(fs, inf, outf)).empty_immediate()
 
     def render(self, template, additional_ctx=None):
         return template.render(self.as_dict(additional_ctx))
 
-class EnvWrapper:
-    def __init__(self, env):
-        self.env = env
-
-    # Template loading
-    def template_from_string(self, s):
-        return self.env.from_string(s)
-
-    def load_template(self, name):
-        return self.env.get_template(name)
-
-    def as_module(self, template, ctx):
-        return template.make_module(ctx.as_dict())
+# To unify these concepts:
+# Have some hook for loading the file, returning a template, and an
+# updated context
 
 
-class JinjaDataFile(ExecutionRule):
+class JinjaRenderable(ExecutionRule):
     def __init__(self, env, ctx):
         self.env = env
         self.ctx = ctx
 
     def __call__(self, fs, inf, outf):
-        s = fs.read(inf)
-        t = self.env.template_from_string(s)
-        ctx = self.ctx.with_immediate(fs, inf, outf, s)
-        tmod = self.env.as_module(t, ctx)
-        layout = self.env.load_template(tmod.content_layout)
-
+        ctx = self.ctx.with_immediate(fs, inf, outf)
+        ctx, template = self.load_file(fs, inf, outf, ctx)
         execution = lambda state: fs.write(outf,
-                ctx.add(dict(user_context=state, data_template=tmod)).render(layout))
-
-        state = dict(type="jinja_template", context=ctx.as_dict(), template=tmod)
+                ctx.add(dict(user_context=state)).render(template))
+        state = dict(type="jinja_template", context=ctx.as_dict())
         return execution, state
 
-class JinjaLayoutFile(ExecutionRule):
-    def __init__(self, env, ctx):
-        self.env = env
-        self.ctx = ctx
+    def load_file(self, fs, inf, outf, ctx):
+        raise NotImplementedError
 
-    def __call__(self, fs, inf, outf):
-        state = None
+class JinjaDataFile(JinjaRenderable):
+    def load_file(self, fs, inf, outf, ctx):
         s = fs.read(inf)
-        t = self.env.template_from_string(s)
-        ctx = self.ctx.with_immediate(fs, inf, outf, s)
-        execution = lambda state: fs.write(outf, ctx.add(dict(user_context=state)).render(t))
-        return execution, state
+        t = self.env.from_string(s)
+        tmod = t.make_module(ctx.as_dict())
+        layout = self.env.get_template(tmod.content_layout)
+        ctx = ctx.add(dict(data_template=tmod))
+        return ctx, layout
+
+class JinjaLayoutFile(JinjaRenderable):
+    def load_file(self, fs, inf, outf, ctx):
+        # Simply read the file, and make it a template
+        s = fs.read(inf)
+        t = self.env.from_string(s)
+        return ctx, t
 
 
 
-# TODO Simplify this logic dramatically
 class JinjaFile(ExecutionRule):
     def __init__(self, env, ctx):
         self.env = env
