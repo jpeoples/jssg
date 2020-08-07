@@ -29,7 +29,7 @@ class Environment:
             self.jinja_search_prefix_paths = ()
             self.jinja_additional_loaders = [jinja_utils.rss_loader()]
             #self.jinja_base_context = jinja_utils.Context()
-            self.jinja_base_context = kwargs.pop('jinja_base_context', jinja_utils.Context())
+            self.jinja_base_context = kwargs.pop('jinja_base_context', {})
             #self.jinja_base_context = {}
             #self.jinja_immediate_context = []
             

@@ -3,68 +3,24 @@ from .execution_rule import ExecutionRule
 import dateutil.parser
 import email.utils
 
-class Context:
-    def __init__(self, ctx=None, imm=None):
-        self.render_context = ctx if ctx else {}
-        self.immediate_context = imm if imm else []
-
-    # regular context handling
-    def add(self, ctx):
-        if ctx is None: return self
-
-        rctx = self.render_context.copy()
-        rctx.update(ctx)
-        return Context(rctx, self.immediate_context)
-
-    def as_dict(self, additional_ctx=None):
-        return self.add(additional_ctx).render_context
-
-
-    # immediate context handling
-    def add_immediate(self, ctx):
-        if ctx is None: return self
-
-        imm_ctx = self.immediate_context.copy()
-        imm_ctx.append(ctx)
-        return Context(self.render_context, imm_ctx)
-
-
-    def get_immediate(self, fs, inf, outf):
-        add_ctx = {}
-        if len(self.immediate_context) > 0:
-            #add_ctx = self.render_context.copy()
-            #add_ctx = {}
-            for ctx in self.immediate_context:
-                add_ctx.update(ctx(self.render_context, inf, outf))
-        return add_ctx
-
-    def empty_immediate(self):
-        return Context(self.render_context)
-
-    # with immediate context converts immediate context to regular
-    # context
-    def with_immediate(self, fs, inf, outf):
-        return self.add(self.get_immediate(fs, inf, outf)).empty_immediate()
-
-    def render(self, template, additional_ctx=None):
-        return template.render(self.as_dict(additional_ctx))
-
-# To unify these concepts:
-# Have some hook for loading the file, returning a template, and an
-# updated context
-
-
 class JinjaRenderable(ExecutionRule):
-    def __init__(self, env, ctx):
-        self.env = env
-        self.ctx = ctx
+    def __init__(self, jf):
+        self.jf = jf
+
+    @property
+    def env(self):
+        return self.jf.env
+
+    @property
+    def ctx(self):
+        return self.jf.ctx
 
     def __call__(self, fs, inf, outf):
-        ctx = self.ctx.with_immediate(fs, inf, outf)
-        ctx, template = self.load_file(fs, inf, outf, ctx)
+        ctx = self.jf.immediate_context(fs, inf, outf)
+        template = self.load_file(fs, inf, outf, ctx)
         execution = lambda state: fs.write(outf,
-                ctx.add(dict(user_context=state)).render(template))
-        state = dict(type="jinja_template", context=ctx.as_dict())
+                template.render(ctx, user_context=state))
+        state = dict(type="jinja_template", context=ctx)
         return execution, state
 
     def load_file(self, fs, inf, outf, ctx):
@@ -74,17 +30,17 @@ class JinjaDataFile(JinjaRenderable):
     def load_file(self, fs, inf, outf, ctx):
         s = fs.read(inf)
         t = self.env.from_string(s)
-        tmod = t.make_module(ctx.as_dict())
+        tmod = t.make_module(ctx)
         layout = self.env.get_template(tmod.content_layout)
-        ctx = ctx.add(dict(data_template=tmod))
-        return ctx, layout
+        ctx['data_template'] = tmod
+        return layout
 
 class JinjaLayoutFile(JinjaRenderable):
     def load_file(self, fs, inf, outf, ctx):
         # Simply read the file, and make it a template
         s = fs.read(inf)
         t = self.env.from_string(s)
-        return ctx, t
+        return t
 
 
 
@@ -92,14 +48,25 @@ class JinjaFile(ExecutionRule):
     def __init__(self, env, ctx):
         self.env = env
         self.ctx = ctx
+        self.hooks = []
+
+    def add_immediate_context_hook(self, hook):
+        self.hooks.append(hook)
+
+    def immediate_context(self, fs, inf, outf):
+        ctx = self.ctx.copy()
+        if len(self.hooks) > 0:
+            for hook in self.hooks:
+                ctx.update(hook(self.ctx, inf, outf))
+        return ctx
 
 
     @property
     def as_layout(self):
-        return JinjaLayoutFile(self.env, self.ctx)
+        return JinjaLayoutFile(self)
 
     def __call__(self, fs, inf, outf):
-        return JinjaDataFile(self.env, self.ctx)(fs, inf, outf)
+        return JinjaDataFile(self)(fs, inf, outf)
 
 
 
