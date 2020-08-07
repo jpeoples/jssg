@@ -153,7 +153,6 @@ class BuildEnv:
         self.indir = indir
         self.outdir = outdir
         self.filemapper = filemapper if filemapper is not None else FileMapper()
-        self.reset_state()
         self.listeners = {}
 
     def add_listener(self, name, listener):
@@ -161,7 +160,7 @@ class BuildEnv:
 
 
     def translate_to_execution(self, rule, file):
-        if rule is None: return
+        if rule is None: return None
         pm, rule = rule
         inf, outf = execute_path_map(pm, file, self.indir, self.outdir)
         rule = ExecutionRule.wrap(rule)
@@ -170,35 +169,32 @@ class BuildEnv:
             for l in self.listeners.values():
                 if hasattr(l, "on_data_return"):
                     l.on_data_return(inf, outf, data)
-        self.add_execution(execution)
-        return
+        return execution
 
 
     def add_execution(self, execution):
         self.execution_sequence.append(execution)
 
     def build(self, rules, files=""):
+        executions = []
         if isinstance(files, str):
             files = list_all_files(os.path.join(self.indir, files), rel_to=self.indir)
         for file in files:
             rule = first_matching_rule(rules, file)
-            self.translate_to_execution(rule, file)
+            ex = self.translate_to_execution(rule, file)
+            if ex is not None:
+                executions.append(ex)
 
-        self.flush_execution()
+        self.run_executions(executions)
 
-    def flush_execution(self):
+    def run_executions(self, executions):
         exec_state = {}
         for name, l in self.listeners.items():
             if hasattr(l, 'before_execute'):
                 exec_state[name] = l.before_execute()
 
-        for ex in self.execution_sequence:
+        for ex in executions:
             ex(exec_state)
-
-        self.reset_state()
-
-    def reset_state(self):
-        self.execution_sequence = []
 
 def first_matching_rule(rules, path, default=None):
     for (rule, result) in rules:

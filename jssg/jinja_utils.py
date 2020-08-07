@@ -3,52 +3,70 @@ from .execution_rule import ExecutionRule
 import dateutil.parser
 import email.utils
 
+class _RendererImpl:
+    def __init__(self, name=None, load_file=None, create_state=None, obj=None):
+        self._name = name
+        self._load_file = load_file
+        self._create_state = create_state
+        self._obj = obj
+
+    def _get_load(self):
+        if self._load_file: return self._load_file
+        if self._obj and hasattr(self._obj, 'load_file'):
+            return self._obj.load_file
+
+        def _default_load(jf, fs, inf, outf, ctx):
+            s = fs.read(inf)
+            t = jf.env.from_string(s)
+            return t
+        return _default_load
+
+    def _get_create_state(self):
+        if self._create_state: return self._create_state
+        if self._obj and hasattr(self._obj, 'create_state'):
+            return self._obj.create_state
+
+        def _default_create_state(jf, fs, inf, outf, ctx):
+            if self._name is None: return None
+            return dict(type=self._name, context=ctx)
+
+        return _default_create_state
+
+
+    def load_file(self, jf, fs, inf, outf, ctx):
+        return self._get_load()(jf, fs, inf, outf, ctx)
+
+    def create_state(self, jf, fs, inf, outf, ctx):
+        return self._get_create_state()(jf, fs, inf, outf, ctx)
+
 class JinjaRenderable(ExecutionRule):
-    def __init__(self, jf):
+    def __init__(self, jf, impl):
         self.jf = jf
+        self.impl = impl
 
     @property
     def env(self):
         return self.jf.env
 
-    @property
-    def ctx(self):
-        return self.jf.ctx
 
     def __call__(self, fs, inf, outf):
         ctx = self.jf.immediate_context(fs, inf, outf)
-        template = self.load_file(fs, inf, outf, ctx)
+        template = self.impl.load_file(self.jf, fs, inf, outf, ctx)
+        state = self.impl.create_state(self.jf, fs, inf, outf, ctx)
         execution = lambda state: fs.write(outf,
                 template.render(ctx, user_context=state))
-        state = dict(type="jinja_template", context=ctx)
         return execution, state
-
-    def load_file(self, fs, inf, outf, ctx):
-        raise NotImplementedError
-
-class JinjaDataFile(JinjaRenderable):
-    def load_file(self, fs, inf, outf, ctx):
-        s = fs.read(inf)
-        t = self.env.from_string(s)
-        tmod = t.make_module(ctx)
-        layout = self.env.get_template(tmod.content_layout)
-        ctx['data_template'] = tmod
-        return layout
-
-class JinjaLayoutFile(JinjaRenderable):
-    def load_file(self, fs, inf, outf, ctx):
-        # Simply read the file, and make it a template
-        s = fs.read(inf)
-        t = self.env.from_string(s)
-        return t
-
-
 
 class JinjaFile(ExecutionRule):
     def __init__(self, env, ctx):
         self.env = env
         self.ctx = ctx
         self.hooks = []
+
+    def render_markdown_string(self, s, ctx):
+        # TODO: Something better than looking up in dict?
+        md = self.env.filters['markdown']
+        return md(self.env.from_string(s).render(ctx))
 
     def add_immediate_context_hook(self, hook):
         self.hooks.append(hook)
@@ -60,14 +78,22 @@ class JinjaFile(ExecutionRule):
                 ctx.update(hook(self.ctx, inf, outf))
         return ctx
 
+    #def layout(self, name=None):
+    #    return JinjaLayoutFile(self, name)
 
-    @property
-    def as_layout(self):
-        return JinjaLayoutFile(self)
+    def renderer(self, *, name=None, obj=None, load_file=None, create_state=None):
+        if load_file is not None or create_state is not None:
+            assert obj is None
+
+        obj = _RendererImpl(name, load_file, create_state, obj)
+        return JinjaRenderable(self, obj)
 
     def __call__(self, fs, inf, outf):
-        return JinjaDataFile(self)(fs, inf, outf)
+        return self.renderer()(fs, inf, outf)
 
+
+    def data(self, name=None):
+        return JinjaDataFile(self, name)
 
 
 #### Jinja setup helpers
