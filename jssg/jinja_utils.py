@@ -1,7 +1,5 @@
 from .execution_rule import ExecutionRule
 
-import dateutil.parser
-import email.utils
 
 class _RendererImpl:
     def __init__(self, name=None, load_file=None, create_state=None, obj=None):
@@ -39,15 +37,10 @@ class _RendererImpl:
     def create_state(self, jf, fs, inf, outf, ctx):
         return self._get_create_state()(jf, fs, inf, outf, ctx)
 
-class JinjaRenderable(ExecutionRule):
+class _JinjaRenderer(ExecutionRule):
     def __init__(self, jf, impl):
         self.jf = jf
         self.impl = impl
-
-    @property
-    def env(self):
-        return self.jf.env
-
 
     def __call__(self, fs, inf, outf):
         ctx = self.jf.immediate_context(fs, inf, outf)
@@ -58,18 +51,16 @@ class JinjaRenderable(ExecutionRule):
         return execution, state
 
 class JinjaFile(ExecutionRule):
-    def __init__(self, env, ctx):
+    def __init__(self, env, ctx, hooks=None):
         self.env = env
         self.ctx = ctx
-        self.hooks = []
+        self.hooks = hooks if hooks is not None else []
 
     def render_markdown_string(self, s, ctx):
         # TODO: Something better than looking up in dict?
         md = self.env.filters['markdown']
         return md(self.env.from_string(s).render(ctx))
 
-    def add_immediate_context_hook(self, hook):
-        self.hooks.append(hook)
 
     def immediate_context(self, fs, inf, outf):
         ctx = self.ctx.copy()
@@ -78,26 +69,18 @@ class JinjaFile(ExecutionRule):
                 ctx.update(hook(self.ctx, inf, outf))
         return ctx
 
-    #def layout(self, name=None):
-    #    return JinjaLayoutFile(self, name)
-
     def renderer(self, *, name=None, obj=None, load_file=None, create_state=None):
         if load_file is not None or create_state is not None:
             assert obj is None
 
         obj = _RendererImpl(name, load_file, create_state, obj)
-        return JinjaRenderable(self, obj)
+        return _JinjaRenderer(self, obj)
 
     def __call__(self, fs, inf, outf):
         return self.renderer()(fs, inf, outf)
 
-
-    def data(self, name=None):
-        return JinjaDataFile(self, name)
-
-
-#### Jinja setup helpers
-def jinja_env(search_paths=(), prefix_paths=(), additional_loaders=None, filters=None):
+# Code for configuring libs, like the jinja_environment
+def jinja_env(search_paths=(), prefix_paths=(), additional_loaders=None, filters=None, support_rss=True, rss_name="builtin/rss_base.xml"):
     """Initialize a jinja env that searches all load_paths for templates.
 
     builtin templates can also be found under builtin/
@@ -123,6 +106,12 @@ def jinja_env(search_paths=(), prefix_paths=(), additional_loaders=None, filters
                 assert isinstance(tup, str)
                 yield (tup, tup)
 
+    if filters is None:
+        filters = {}
+
+    if additional_loaders is None:
+        additional_loaders = []
+
 
     user_prefix_loader = jinja2.PrefixLoader(
             {prefix: jinja2.FileSystemLoader(path)
@@ -130,60 +119,29 @@ def jinja_env(search_paths=(), prefix_paths=(), additional_loaders=None, filters
 
     user_loader = jinja2.ChoiceLoader([jinja2.FileSystemLoader(path) for path in search_paths])
 
-    if additional_loaders is not None:
+
+
+    if support_rss:
+        additional_loaders.append(rss_loader(rss_name))
+        filters['rss_format_date'] = rss_date
+
+
+    if additional_loaders:
         additional_loader = jinja2.ChoiceLoader(additional_loaders)
 
-    loader = jinja2.ChoiceLoader([user_loader, user_prefix_loader, additional_loader])
+    loader = jinja2.ChoiceLoader([user_loader, user_prefix_loader]+additional_loaders)
 
     jinja_env = jinja2.Environment(loader=loader, undefined=jinja2.StrictUndefined)
-    if filters is not None:
+
+    if filters:
         jinja_env.filters.update(filters)
 
     return jinja_env
 
-parse_date = dateutil.parser.parse
-def date_formatter(format_str='%B %d, %Y'):
-    return lambda x: format_date(x, format_str)
-
-def rss_date(x):
-    """Format a datestr into a format acceptable for RSS"""
-    if isinstance(x, str):
-        x = dateutil.parser.parse(x)
-    return email.utils.format_datetime(x)
-
-def format_date(x, format_str):
-    """Format a datestr with a given format string"""
-    if isinstance(x, str):
-        x = dateutil.parser.parse(x)
-    return x.strftime(format_str)
-
-
-def markdown_filter(extensions=None, extension_configs=None, include_mdx_math=False):
+def markdown_filter(extensions=None, extension_configs=None):
     import markdown
-    default_extensions = [
-        'markdown.extensions.extra',
-        'markdown.extensions.admonition',
-        'markdown.extensions.toc',
-        'markdown.extensions.codehilite',
-        'mdx_math'
-    ]
-    default_extension_configs = {
-            'markdown.extensions.codehilite': {'guess_lang': False}
-    }
-
-    if extensions is None:
-        extensions = default_extensions
-        if not include_mdx_math:
-            extensions = extensions[:-1]
-
-    if extension_configs is None:
-        extension_configs = default_extension_configs
-        if include_mdx_math:
-            extension_configs['mdx_math'] = {'enable_dollar_delimiter': True}
-
     mdfilter = lambda x: markdown.markdown(x, extensions=extensions, extension_configs=extension_configs)
     return mdfilter
-
 
 _rss_base_src = """
 <?xml version="1.0" encoding="UTF-8" ?>
@@ -206,6 +164,26 @@ _rss_base_src = """
 </rss>
 """.strip()
 
+def rss_date(x):
+    """Format a datestr into a format acceptable for RSS"""
+    import dateutil.parser
+    import email.utils
+
+    if isinstance(x, str):
+        x = dateutil.parser.parse(x)
+    return email.utils.format_datetime(x)
+
 def rss_loader(name='builtin/rss_base.xml'):
     import jinja2
     return jinja2.DictLoader({name: _rss_base_src})
+
+def date_formatter(format_str='%B %d, %Y'):
+    return lambda x: format_date(x, format_str)
+
+
+def format_date(x, format_str):
+    """Format a datestr with a given format string"""
+    import dateutil.parser
+    if isinstance(x, str):
+        x = dateutil.parser.parse(x)
+    return x.strftime(format_str)
