@@ -92,7 +92,11 @@ def evaluate_rules(fs, rule_file_pairs, listeners=None):
 
 def _lazy_evaluate_rules(fs, rule_file_pairs):
     for rule, f in rule_file_pairs:
-        outf, (ex, data) = _execute_rule(fs, rule, f)
+        result = _execute_rule(fs, rule, f)
+        if result is None:
+            continue
+        outf, (ex, data) = result
+
         yield (f, outf, data), ex
 
 def _execute_rule(fs, rule, f):
